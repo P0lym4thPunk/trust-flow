@@ -4,29 +4,26 @@ import { NavigationShell } from "./components/NavigationShell";
 import { ConversationalWorkspace } from "./components/ConversationalWorkspace";
 import { AgreementDetailRoom } from "./components/AgreementDetailRoom";
 import { AgreementListView } from "./components/AgreementListView";
-import { AuthModal } from "./components/AuthModal";
-import { AuthProvider, useAuth } from "./lib/auth/AuthContext";
 import { AgreementRecord, TransactionType } from "./types/agreement";
 import {
   WalletAccount,
+  SIMULATED_PROFILES,
   connectFreighterWallet,
 } from "./lib/stellar/wallet";
 
-function TrustFlowMain() {
+export default function App() {
   const [inApp, setInApp] = useState(false);
   const [activeTab, setActiveTab] = useState("workspace");
   const [isDark, setIsDark] = useState(true);
+  const [currentAccount, setCurrentAccount] = useState<WalletAccount>(
+    SIMULATED_PROFILES[0]
+  );
+  const [isSimulated, setIsSimulated] = useState(true);
   const [agreements, setAgreements] = useState<AgreementRecord[]>([]);
   const [selectedAgreement, setSelectedAgreement] =
     useState<AgreementRecord | null>(null);
   const [workspaceInitialType, setWorkspaceInitialType] =
     useState<TransactionType>("WORK");
-
-  const {
-    effectiveAccount,
-    setIsDemoSandbox,
-    setSelectedDemoPersona,
-  } = useAuth();
 
   // Sync dark theme class on documentElement
   useEffect(() => {
@@ -54,13 +51,13 @@ function TrustFlowMain() {
     fetchAgreements();
   }, []);
 
-  // Connect authentic Freighter wallet (fallback)
+  // Connect authentic Freighter wallet
   const handleConnectRealWallet = async () => {
     try {
       const realAccount = await connectFreighterWallet();
       if (realAccount) {
-        setSelectedDemoPersona(realAccount);
-        setIsDemoSandbox(false);
+        setCurrentAccount(realAccount);
+        setIsSimulated(false);
       }
     } catch (err: any) {
       alert(err.message || "Failed to connect Freighter wallet.");
@@ -69,8 +66,8 @@ function TrustFlowMain() {
 
   // Switch persona (e.g. Alice Payer, Bob Contractor, Charlie Approver)
   const handleAccountChange = (account: WalletAccount) => {
-    setSelectedDemoPersona(account);
-    setIsDemoSandbox(true);
+    setCurrentAccount(account);
+    setIsSimulated(account.isSimulated);
   };
 
   // Update agreement record in state and server
@@ -111,9 +108,9 @@ function TrustFlowMain() {
         setSelectedAgreement(null);
         setActiveTab(tab);
       }}
-      currentAccount={effectiveAccount}
+      currentAccount={currentAccount}
       onAccountChange={handleAccountChange}
-      isSimulated={effectiveAccount.isSimulated}
+      isSimulated={isSimulated}
       onConnectRealWallet={handleConnectRealWallet}
       isDark={isDark}
       onToggleTheme={() => setIsDark(!isDark)}
@@ -121,14 +118,14 @@ function TrustFlowMain() {
       {selectedAgreement ? (
         <AgreementDetailRoom
           agreement={selectedAgreement}
-          currentAccount={effectiveAccount}
+          currentAccount={currentAccount}
           onUpdateAgreement={handleUpdateAgreement}
           onBack={() => setSelectedAgreement(null)}
         />
       ) : activeTab === "workspace" ? (
         <ConversationalWorkspace
           initialType={workspaceInitialType}
-          currentUserAddress={effectiveAccount.address}
+          currentUserAddress={currentAccount.address}
           onAgreementCreated={(newAgr) => {
             setAgreements((prev) => [newAgr, ...prev]);
             setSelectedAgreement(newAgr);
@@ -146,14 +143,5 @@ function TrustFlowMain() {
         />
       )}
     </NavigationShell>
-  );
-}
-
-export default function App() {
-  return (
-    <AuthProvider>
-      <TrustFlowMain />
-      <AuthModal />
-    </AuthProvider>
   );
 }

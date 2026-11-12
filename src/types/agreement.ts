@@ -3,6 +3,8 @@ export type TransactionType = "WORK" | "PROTECTED_PAYMENT" | "CONDITIONAL_DISBUR
 export type EscrowStatus =
   | "DRAFT"
   | "CREATED"
+  | "READY_FOR_FUNDING"
+  | "FUNDING_PENDING"
   | "FUNDED"
   | "FULFILMENT_SUBMITTED"
   | "APPROVED"
