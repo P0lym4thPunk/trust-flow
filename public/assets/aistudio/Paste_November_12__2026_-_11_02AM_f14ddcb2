@@ -1,0 +1,930 @@
+TRUSTFLOW — FINAL ARCHITECTURE AUDIT AND CONSOLIDATED REVISION
+
+We have completed multiple rounds of product and architecture
+planning. The latest document is titled:
+
+"TrustFlow — Final Implementation Plan & System Architecture"
+
+I want ONE comprehensive final audit and correction, not another
+sequence of small reviews.
+
+Your responsibility is to inspect the complete existing project
+context, the latest architecture document, the repository
+foundation and relevant official technical documentation.
+
+Identify and resolve ALL inconsistencies, missing specifications,
+incorrect assumptions, impossible implementation steps,
+security gaps and contradictions.
+
+Do not simply repeat the previous plan with minor edits.
+
+IMPORTANT:
+Remain in PLAN MODE.
+Do not modify source files.
+Do not install dependencies.
+Do not create contracts.
+Do not deploy anything.
+Do not begin implementation.
+
+============================================================
+PART 1 — PRESERVE THE CONFIRMED PRODUCT DIRECTION
+============================================================
+
+TrustFlow is an AI-assisted universal escrow and conditional
+payments application on Stellar.
+
+Core promise:
+"Money moves when the agreed condition is satisfied."
+
+Product templates:
+1. Work-based Escrow.
+2. Protected Everyday Payments.
+3. Conditional Disbursements.
+
+One reusable Soroban escrow engine.
+
+Initial implementation scope:
+- One payer.
+- One recipient.
+- One designated approver.
+- One fulfilment submission.
+- One approval.
+- One release or eligible refund.
+
+No marketplace, lending, fiat on/off-ramps, mainnet funds,
+complex arbitration or multi-approver workflows in the MVP.
+
+Technology direction:
+- React SPA.
+- Vite.
+- TypeScript.
+- Tailwind CSS v4.
+- Express server with Vite middleware during development.
+- @google/genai.
+- Gemini 3.8 Flash, subject to current API verification.
+- Stellar Wallets Kit.
+- @stellar/stellar-sdk.
+- Rust and soroban-sdk.
+- Temporary local demo persistence.
+- Supabase PostgreSQL and RLS as the eventual production
+  persistence layer.
+- Stellar Testnet only.
+
+Preserve the visual direction:
+Stellar Gold #F5D03A.
+Nebula Purple #4A2574.
+Dark and light themes.
+Use the uploaded design references as visual authority.
+
+Do not unnecessarily change confirmed decisions.
+
+============================================================
+PART 2 — AUDIT THE ACTUAL PROJECT FOUNDATION
+============================================================
+
+Inspect the existing repository and identify:
+
+- Current framework and versions.
+- Existing application entry points.
+- Package manager and package scripts.
+- Existing dependencies.
+- Existing environment configuration.
+- Existing UI components.
+- Existing uploaded design references.
+- Current Google AI Studio runtime assumptions.
+- Whether the selected server architecture works in the
+  intended development and deployment environments.
+
+Do not assume a package exists merely because the plan
+mentions it.
+
+Do not overwrite useful existing work.
+
+Document any architectural changes required to make the
+repository consistent.
+
+Keep React + Vite + Express unless a genuine technical
+blocker is discovered. If one exists, explain it and propose
+the smallest appropriate correction.
+
+Specify a realistic production hosting approach for Express.
+Do not casually claim that a persistent Express server can
+be deployed to every serverless platform without an adapter
+and appropriate runtime configuration.
+
+============================================================
+PART 3 — FIX THE COMPLETE SOROBAN CONTRACT DESIGN
+============================================================
+
+This is the most important part of the audit.
+
+The contract must enforce the financial rules independently
+of the frontend, backend and AI.
+
+A. PARTICIPANT AUTHORIZATION
+
+The contract must enforce:
+- Payer authorization for funding.
+- Recipient authorization for fulfilment submission.
+- Approver authorization for approval or rejection.
+- Required participant authorization for acceptance.
+- No unauthorized participant can perform another role's action.
+
+Do not trust caller-supplied Address parameters.
+
+Where appropriate, derive the authorized role from the
+stored escrow record and use Soroban Address authorization
+with require_auth().
+
+Review every exported contract function for this issue.
+
+The payer, recipient and approver must be distinct accounts
+in the MVP unless a documented product decision explicitly
+allows an exception.
+
+Define who is permitted to create an escrow. Do not allow
+arbitrary accounts to create records on behalf of other
+participants without appropriate authorization.
+
+B. AGREEMENT ACCEPTANCE
+
+The contract must record explicit acceptance from both
+payer and recipient.
+
+Acceptance must be bound to:
+- The exact agreement hash.
+- The exact agreement version.
+- The correct escrow.
+- The correct participant.
+
+Funding must fail unless both required acceptance records
+match the current agreement.
+
+The acceptance mechanism must require actual participant
+authorization. A frontend checkbox or database record is
+not proof of on-chain acceptance.
+
+C. AGREEMENT VERSIONING
+
+The latest plan describes version changes but does not
+provide a function that implements them.
+
+Resolve this without unnecessary complexity.
+
+Preferred MVP approach:
+
+Once an escrow is created on-chain, its material terms
+are immutable.
+
+If the agreement changes before funding:
+1. Cancel the old unfunded escrow.
+2. Create a new escrow with the revised terms.
+3. Generate a new canonical hash.
+4. Use the next agreement version.
+5. Require the necessary participants to accept the new
+   escrow independently.
+
+This avoids silently modifying a previously accepted
+agreement.
+
+If you recommend another approach, specify every required
+contract function, authorization rule and acceptance reset.
+
+Update the test cases to match the chosen design.
+
+D. CONTRACT STATE MACHINE
+
+Define every allowed transition, caller, precondition,
+state mutation and failure outcome.
+
+Use this MVP lifecycle as the starting point:
+
+CREATED
+  - Awaiting participant acceptance.
+  - Can be cancelled before funding.
+
+FUNDED
+  - Exact tokens are locked in the contract.
+  - Recipient may submit fulfilment before or at deadline.
+  - Eligible payer timeout refund if no fulfilment exists.
+  - Mutual cancellation may be supported.
+
+FULFILMENT_SUBMITTED
+  - Recipient has submitted fulfilment.
+  - Approver must review it.
+  - Payer cannot claim a unilateral timeout refund merely
+    because the deadline passed after timely submission.
+  - Approver may approve or reject according to defined rules.
+  - Mutual cancellation may be supported if explicitly authorized.
+
+APPROVED
+  - Condition is approved.
+  - Funds are eligible for release.
+  - Refund is prohibited.
+
+RELEASED
+  - Terminal state.
+  - Exact escrowed amount transferred to recipient.
+
+REFUNDED
+  - Terminal state.
+  - Exact escrowed amount transferred back to payer.
+
+CANCELLED
+  - Terminal unfunded state.
+  - No tokens transferred.
+
+Do not introduce ambiguous or unreachable states.
+
+E. MISSING CONTRACT FUNCTIONS
+
+The latest document describes mutual cancellation and
+fulfilment rejection but does not define their complete
+implementation.
+
+Resolve this.
+
+At minimum, evaluate and specify:
+
+- create_escrow
+- record_acceptance
+- fund_escrow
+- submit_fulfilment
+- approve_condition
+- reject_fulfilment
+- request_cancel
+- confirm_cancel
+- refund_escrow
+- release_funds
+- cancel_escrow
+- get_escrow
+
+You may consolidate functions where technically justified.
+
+For each function define:
+- Authorized caller.
+- Required authentication.
+- Allowed current state.
+- Required parameters.
+- State changes.
+- Token movement, if any.
+- Failure conditions.
+- Corresponding automated tests.
+
+Do not leave functions described in business rules but
+absent from the exported contract interface.
+
+F. MUTUAL CANCELLATION
+
+A single participant must not be able to claim mutual
+cancellation.
+
+Define a mechanism that records one party's request and
+requires the other party's independent authorization.
+
+Define:
+- Who may initiate.
+- Who must confirm.
+- Whether cancellation is possible during fulfilment review.
+- Whether it is prohibited after approval.
+- What happens if the second party never responds.
+
+G. FULFILMENT REJECTION
+
+The previous plan says rejection causes a refund but does
+not define the exported rejection function.
+
+For the MVP, use a simple and explicit policy:
+
+- Only the designated approver can reject.
+- Rejection is recorded on-chain.
+- The rejection transitions to a clearly defined refund
+  outcome.
+- The exact refund destination is the payer.
+- No revision/resubmission mechanism is implied unless
+  separately implemented.
+
+Clearly disclose that the approver's rejection authority
+is a trust assumption of this MVP, not objective proof
+that the recipient failed to deliver.
+
+H. DEADLINE RULES
+
+Define precise boundary behaviour using ledger timestamps.
+
+Specify:
+- Funding deadline.
+- Fulfilment submission deadline.
+- Exact equality behaviour.
+- Timeout refund eligibility.
+- What happens after timely fulfilment submission.
+- What happens while an approver is reviewing.
+- What happens after approval.
+
+There must be no contradictory deadline rules.
+
+I. TOKEN TRANSFERS
+
+Verify the current Stellar Asset Contract interface.
+
+Specify the correct token transfer and authorization flow.
+
+Do not introduce an unnecessary EVM-style allowance
+mechanism without verifying that it is required.
+
+The contract must:
+- Restrict accepted token contracts to the supported
+  testnet assets.
+- Reject unsupported token addresses.
+- Verify exact integer amounts.
+- Prevent duplicate funding.
+- Prevent double release.
+- Prevent duplicate refunds.
+- Maintain correct state if a transfer fails.
+
+Use appropriate Soroban authorization and token transfer
+patterns from current official documentation.
+
+J. STORAGE AND CONTRACT LIFECYCLE
+
+Review Soroban storage requirements, TTL considerations,
+contract errors, events and state persistence.
+
+Specify:
+- Storage keys.
+- Escrow ID generation.
+- Duplicate ID prevention.
+- Terminal state persistence.
+- Relevant events for indexing.
+- Contract upgrade assumptions for the prototype.
+- Testnet deployment and invocation workflow.
+
+Prefer contract-generated sequential escrow IDs over
+unrestricted caller-supplied IDs unless a strong reason
+exists otherwise.
+
+============================================================
+PART 4 — FIX AGREEMENT HASHING AND VERSION INTEGRITY
+============================================================
+
+The current description says to sort JSON keys and strip
+whitespace. That alone is not a complete canonicalization
+protocol.
+
+Define a deterministic serialization standard.
+
+Consider RFC 8785 JSON Canonicalization Scheme or another
+well-specified approach.
+
+Specify:
+- UTF-8 encoding.
+- Key ordering.
+- Unicode handling.
+- Number normalization.
+- Decimal strings.
+- Null versus omitted fields.
+- Array ordering.
+- Timestamp normalization.
+- Schema version.
+- Agreement version.
+- Network/domain separation.
+- Hash algorithm.
+- Exact byte representation passed to the contract.
+
+The canonical hash must cover every material agreement term,
+including:
+- Payer.
+- Recipient.
+- Approver.
+- Asset.
+- Amount.
+- Deliverables.
+- Condition.
+- Deadline.
+- Cancellation terms.
+- Agreement version.
+
+Ensure that the hash cannot be accidentally reused across
+different networks or escrow contexts.
+
+Create shared test vectors so the frontend, backend and
+contract tooling calculate the same digest.
+
+Do not claim the contract independently verifies agreement
+content if it only stores a supplied digest.
+
+Explain exactly what the on-chain hash proves and what
+remains an off-chain participant responsibility.
+
+============================================================
+PART 5 — FIX FINANCIAL AMOUNT HANDLING
+============================================================
+
+The current plan contains a contradiction:
+
+Maximum amount:
+100,000,000.0000000
+
+But the regex allows only eight integer digits.
+
+Resolve the maximum and validation rules consistently.
+
+Requirements:
+
+- No floating-point financial values.
+- AI returns amount as a decimal string.
+- Server validates the decimal string.
+- Server converts it into exact integer token units.
+- Contract receives a positive i128 amount.
+- Seven decimal places maximum.
+- Minimum amount: one smallest token unit.
+- Maximum amount must match the actual validation rules.
+- No negative amounts.
+- No scientific notation.
+- No excess decimal places.
+- No silent rounding.
+- No leading-zero ambiguity.
+
+Use BigInt for integer conversion in TypeScript.
+
+The AI must never provide the authoritative amountUnits.
+
+Ensure the JSON API serializes integer units as strings
+where necessary because JavaScript BigInt is not directly
+JSON serializable.
+
+Provide verified examples for:
+- 1
+- 0.0000001
+- 500.50
+- Maximum permitted amount.
+- One amount above the maximum.
+- Eight decimal places.
+
+============================================================
+PART 6 — VERIFY TESTNET ASSETS AND FUNDING
+============================================================
+
+Do not blindly trust addresses copied from the previous plan.
+
+Verify each asset using current official Stellar and
+Circle documentation and, where possible, actual testnet
+RPC or network data.
+
+For XLM:
+- Verify the native Stellar Asset Contract address.
+- Verify the testnet RPC.
+- Verify the network passphrase.
+- Verify Friendbot behaviour.
+
+For Circle USDC:
+- Verify the official testnet issuer.
+- Verify the corresponding SAC contract address.
+- Verify token precision.
+- Verify the asset is actually usable on the selected
+  Stellar testnet.
+- Verify whether an official testnet faucet is available.
+- Verify the trustline requirements.
+- Verify whether the payer, escrow contract and recipient
+  require specific asset setup.
+
+Do not claim that the application can mint Circle USDC.
+
+Do not fabricate a faucet or pre-funded balance.
+
+If Circle testnet USDC funding cannot be reliably verified,
+make XLM the default working asset and label USDC as
+temporarily unavailable until a legitimate funding route
+is confirmed.
+
+Make the asset configuration network-specific.
+
+============================================================
+PART 7 — WALLET AND DEMO IDENTITY SECURITY
+============================================================
+
+Maintain two separate modes.
+
+A. REAL WALLET MODE
+
+- Actual Stellar testnet wallet connection.
+- Wallet address verification.
+- Explicit wallet signature for every required transaction.
+- No private keys or seed phrases collected.
+- Human-readable transaction details.
+- Correct network verification.
+- Transaction simulation/preparation where supported.
+- Transaction submission.
+- Confirmation polling and verified result display.
+
+B. SIMULATED DEMO MODE
+
+Alice: Payer.
+Bob: Recipient.
+Charlie: Approver.
+
+Simulated profiles may exercise local demo state only.
+
+They must never:
+- Sign actual Stellar transactions.
+- Produce fabricated transaction hashes.
+- Authorize real contract calls.
+- Be presented as authenticated wallet identities.
+
+Show a persistent DEMO / SIMULATED ENVIRONMENT indicator.
+
+Investigate how demo data remains isolated from real wallet
+data and actual contract records.
+
+Also define how off-chain API requests establish wallet
+ownership. A wallet address supplied by the browser alone
+is not authentication.
+
+Use an appropriate challenge-response signature or another
+verified wallet authentication mechanism.
+
+============================================================
+PART 8 — TRANSACTION RELIABILITY AND STATUS VERIFICATION
+============================================================
+
+Define the complete transaction lifecycle:
+
+1. Build transaction.
+2. Simulate or prepare transaction.
+3. Request wallet signature.
+4. Submit transaction.
+5. Receive transaction hash.
+6. Poll the appropriate Stellar RPC endpoint.
+7. Verify final transaction status.
+8. Verify expected contract state and events.
+9. Update the application projection.
+
+Distinguish:
+
+- Draft.
+- Awaiting signature.
+- Submitted.
+- Pending confirmation.
+- Confirmed.
+- Failed.
+- Rejected by wallet.
+- Expired or timed out.
+
+A submitted transaction must not be displayed as completed.
+
+A transaction hash alone must not be treated as proof
+of successful execution.
+
+Handle:
+- Wallet cancellation.
+- Network timeout.
+- Duplicate submission.
+- Sequence conflicts.
+- Failed contract invocation.
+- RPC interruption.
+- Retry and idempotency.
+- User refreshing the page while pending.
+
+Do not create duplicate escrows when a previous transaction
+is still pending.
+
+Use the appropriate Stellar RPC source for Soroban
+transaction and contract-state verification. Do not assume
+Horizon alone provides all Soroban information required.
+
+============================================================
+PART 9 — AI ASSISTANT AND SECURITY
+============================================================
+
+Keep Gemini 3.8 Flash if current official documentation
+confirms the model remains available and supports the
+required structured outputs.
+
+Define two separate capabilities:
+
+A. Conversational Agreement Builder.
+B. Structured Agreement Generator and Checker.
+
+The AI:
+- Helps users describe agreements.
+- Asks for missing critical terms.
+- Produces structured drafts.
+- Identifies ambiguity.
+- Explains findings in plain language.
+
+The AI must NEVER:
+- Sign transactions.
+- Fund escrows.
+- Approve fulfilment.
+- Release funds.
+- Refund funds.
+- Change on-chain state.
+- Access private keys.
+- Access unrestricted database records.
+
+Do not rely on system prompts as the security boundary.
+
+Use:
+- Strict server-side schema validation.
+- Deterministic business-rule validation.
+- Authenticated data access.
+- Input and output limits.
+- Rate limiting.
+- No privileged financial tools.
+- No secrets in client bundles.
+- Safe error handling.
+- Prompt-injection regression tests.
+
+Ensure the AI schema only generates conditions the MVP
+contract can actually enforce.
+
+Do not expose unsupported TIME, automatic-release or
+multi-approver conditions as working features.
+
+============================================================
+PART 10 — PERSISTENCE AND DATA ARCHITECTURE
+============================================================
+
+Keep demo persistence separate from production persistence.
+
+Demo:
+- Local in-memory/file persistence.
+- Clearly labelled temporary prototype.
+- Safe handling of concurrent writes.
+- Clear reset behaviour.
+- No claim of production durability.
+
+Production:
+- Supabase PostgreSQL.
+- Appropriate authenticated users and wallet identity.
+- Profiles.
+- Wallets.
+- Agreements.
+- Agreement participants.
+- Agreement versions.
+- Acceptance records.
+- Fulfilment/evidence references.
+- Activity events.
+- Transaction records.
+- Contract/network configuration.
+
+Define RLS policies and ensure that users can only access
+agreements in which they are authorized participants.
+
+Do not expose the Supabase service-role key to the client.
+
+The database is a query projection and application data
+store, not the financial authority.
+
+Soroban contract state and verified Stellar transaction
+results remain authoritative.
+
+Define how database projections are reconciled when
+transactions fail or the application goes offline.
+
+============================================================
+PART 11 — FIX THE IMPLEMENTATION ROADMAP
+============================================================
+
+The latest roadmap has a sequencing contradiction:
+it expects the first complete vertical slice to work before
+the full Soroban contract is built.
+
+That is impossible if the vertical slice claims to execute
+real on-chain escrow.
+
+Correct the implementation order.
+
+Use this sequence:
+
+STAGE 1 — Repository and technical foundation
+- Inspect repository.
+- Confirm dependencies and runtime.
+- Configure project structure.
+- Establish environment configuration.
+- Establish development scripts.
+
+STAGE 2 — Design system and application shell
+- Theme.
+- Responsive navigation.
+- Landing page.
+- Wallet interface.
+- Demo mode.
+- Workspace layout.
+
+STAGE 3 — Agreement domain and persistence
+- Types.
+- Agreement lifecycle.
+- Canonical hashing.
+- Amount validation.
+- Demo persistence.
+- Agreement acceptance model.
+
+STAGE 4 — AI Builder and Checker
+- Gemini integration.
+- Structured schemas.
+- Clarification flow.
+- Validation engine.
+- Security boundaries.
+
+STAGE 5 — Soroban contract
+- Rust contract.
+- State machine.
+- Participant authorization.
+- Token transfer.
+- Acceptance.
+- Fulfilment.
+- Approval/rejection.
+- Release/refund/cancellation.
+- Unit and integration tests.
+
+STAGE 6 — Real wallet and testnet integration
+- Wallet connection.
+- Transaction construction.
+- Signing.
+- Submission.
+- Confirmation.
+- Asset balances and funding.
+
+STAGE 7 — Complete Work Escrow vertical slice
+- Draft.
+- Review.
+- Accept.
+- Fund.
+- Submit fulfilment.
+- Approve.
+- Release.
+- Verify.
+- Display explorer information.
+
+STAGE 8 — Expansion and hardening
+- Protected Everyday Payments.
+- Conditional Disbursements.
+- Additional UI and business rules.
+- Security testing.
+- Mobile testing.
+- Error handling.
+- Final verification.
+
+The first two additional transaction templates must not be
+presented as functional if their contract conditions and
+workflows have not been implemented.
+
+============================================================
+PART 12 — COMPLETE TESTING MATRIX
+============================================================
+
+Produce a comprehensive test matrix covering:
+
+CONTRACT:
+- Unauthorized creation.
+- Invalid participants.
+- Duplicate escrow IDs.
+- Invalid token.
+- Invalid amount.
+- Missing acceptance.
+- Wrong acceptance hash.
+- Wrong version.
+- Unauthorized funding.
+- Duplicate funding.
+- Unauthorized fulfilment.
+- Late fulfilment.
+- Approval without fulfilment.
+- Unauthorized approval.
+- Rejection.
+- Mutual cancellation.
+- Unilateral cancellation.
+- Timeout refund.
+- Refund while review is pending.
+- Refund after approval.
+- Duplicate release.
+- Duplicate refund.
+- Token transfer failure.
+
+AGREEMENT:
+- Canonical hash consistency.
+- Material term changes.
+- Version mismatch.
+- Participant acceptance.
+- Hash test vectors.
+- Decimal normalization.
+- Timestamp normalization.
+
+WALLET:
+- Wallet rejected signature.
+- Wrong network.
+- Wrong wallet.
+- Failed transaction.
+- Pending transaction.
+- Duplicate submission.
+- RPC interruption.
+
+AI:
+- Invalid structured output.
+- Missing required fields.
+- Unsupported condition.
+- Invalid amount.
+- Ambiguous terms.
+- Prompt injection.
+- Unauthorized data requests.
+- Attempts to request financial execution.
+
+APPLICATION:
+- Role isolation.
+- Demo isolation.
+- RLS.
+- Responsive layouts.
+- Dark/light contrast.
+- Loading and error states.
+- Browser refresh during pending transactions.
+
+Use actual contract invocation in contract tests and
+follow current Stellar testing documentation.
+
+Do not count a mocked test as proof of an on-chain
+integration.
+
+============================================================
+PART 13 — FINAL DOCUMENT AND DECISION REGISTER
+============================================================
+
+Produce one coherent final architecture document.
+
+It must contain:
+
+1. Executive overview.
+2. Confirmed product scope.
+3. Final technology architecture.
+4. Final repository structure.
+5. Final UX and design system.
+6. Wallet and identity model.
+7. AI architecture.
+8. Agreement domain model.
+9. Canonical hashing protocol.
+10. Financial amount specification.
+11. Testnet asset configuration.
+12. Complete Soroban contract specification.
+13. Contract state machine.
+14. Authorization matrix.
+15. Refund and cancellation rules.
+16. API design.
+17. Persistence design.
+18. Transaction verification lifecycle.
+19. Security architecture.
+20. Implementation roadmap.
+21. Testing matrix.
+22. Deployment approach.
+23. Acceptance criteria.
+
+Also produce a decision register with these categories:
+
+CONFIRMED:
+Decisions supported by project requirements or verified
+technical evidence.
+
+PROPOSED:
+Reasonable implementation defaults that still require
+normal review.
+
+VERIFIED:
+Technical claims checked against current official
+documentation or actual network behaviour.
+
+UNRESOLVED:
+Anything that genuinely cannot be established yet.
+
+Do not claim "no unresolved decisions" simply to make
+the document appear complete.
+
+If a detail cannot be verified, state exactly what must
+be tested and what safe fallback will be used.
+
+Cite the official documentation used for technical claims
+and include the exact model identifiers, network
+configuration and asset details that were verified.
+
+Repair any broken diagrams, missing values, incomplete
+tables, blank operators, malformed code snippets or
+formatting errors in the previous plan.
+
+============================================================
+FINAL INSTRUCTION
+============================================================
+
+Perform this audit comprehensively in one pass.
+
+Do not return a list of small corrections and ask me to
+send another prompt.
+
+Do not ask me to make decisions that can safely be resolved
+through a conservative MVP default.
+
+If a genuinely consequential decision cannot be resolved,
+explain it clearly and recommend the safest option.
+
+Deliver the complete corrected implementation plan,
+all necessary supporting technical specifications and
+the final decision register together.
+
+Remain in PLAN MODE and wait for my approval before
+modifying the repository or starting implementation.
