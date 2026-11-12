@@ -688,7 +688,7 @@ SECURITY & SAFETY BOUNDARIES:
 - Amount MUST be formatted as a decimal string with at most 7 decimals (e.g. "500.00").
 - Asset MUST be either "XLM" or "USDC".`;
 
-    const response = await ai.models.generateContent({
+    const generatePromise = ai.models.generateContent({
       model: "gemini-3.8-flash",
       contents: `User intent: "${prompt}". Transaction type: ${transactionType}. User role: ${userRole}. Extract or clarify the agreement terms.`,
       config: {
@@ -715,10 +715,15 @@ SECURITY & SAFETY BOUNDARIES:
       },
     });
 
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Gemini API call timed out")), 6000)
+    );
+
+    const response: any = await Promise.race([generatePromise, timeoutPromise]);
     const parsed = JSON.parse(response.text || "{}");
     res.json(parsed);
   } catch (err: any) {
-    console.warn("Gemini API call failed, using fallback draft:", err.message);
+    console.warn("Gemini API call failed or timed out, using fallback draft:", err.message);
     res.json(fallbackDraft(prompt, transactionType));
   }
 });
@@ -748,7 +753,7 @@ Return structured findings with severity levels:
 - WARNING: Ambiguity that could cause a dispute.
 - SUGGESTION: Minor polish for clarity.`;
 
-    const response = await ai.models.generateContent({
+    const generatePromise = ai.models.generateContent({
       model: "gemini-3.8-flash",
       contents: `Please audit this agreement:\n${JSON.stringify(terms, null, 2)}`,
       config: {
@@ -779,10 +784,15 @@ Return structured findings with severity levels:
       },
     });
 
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Gemini audit timed out")), 6000)
+    );
+
+    const response: any = await Promise.race([generatePromise, timeoutPromise]);
     const parsed = JSON.parse(response.text || "{}");
     res.json(parsed);
   } catch (err: any) {
-    console.warn("Gemini API check call failed, using fallback audit:", err.message);
+    console.warn("Gemini API check call failed or timed out, using fallback audit:", err.message);
     res.json(fallbackCheck(terms));
   }
 });

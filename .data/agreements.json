@@ -80,11 +80,6 @@
       }
     ]
   },
-  "test-1": {
-    "id": "test-1",
-    "title": "Test",
-    "updatedAt": "2026-11-12T14:07:19.559Z"
-  },
   "agr-test-1794493287293": {
     "id": "agr-test-1794493287293",
     "transactionType": "WORK",
@@ -261,6 +256,236 @@
         "id": "act-1",
         "agreementId": "agr-test-1794493423678",
         "timestamp": "2026-11-12T14:23:43.683Z",
+        "actor": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+        "actorRole": "PAYER",
+        "type": "CREATED",
+        "title": "Agreement Created & Accepted by Payer",
+        "description": "Initial terms drafted."
+      }
+    ]
+  },
+  "agr-test-1794499197181": {
+    "id": "agr-test-1794499197181",
+    "transactionType": "WORK",
+    "title": "Website Redesign & Brand Assets",
+    "description": "Design responsive components and export Figma tokens",
+    "terms": {
+      "amount": "500.00",
+      "asset": "USDC",
+      "payer": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "recipient": "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
+      "approver": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "title": "Website Redesign & Brand Assets",
+      "description": "Design responsive components and export Figma tokens",
+      "deliverables": [
+        "Figma source",
+        "React component kit"
+      ],
+      "condition": "Payer approves submitted Figma design and code",
+      "cancellationTerms": "Mutual cancellation permitted prior to review",
+      "deadline": "2026-11-20T00:00:00.000Z",
+      "contractId": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "domain": "trustflow.stellar.escrow.v1",
+      "network": "testnet",
+      "version": 1
+    },
+    "canonicalHash": "77851fae367926acaeb287e03cd39c700527196d2ad5c6aea97d14b945daff05",
+    "version": 1,
+    "status": "CREATED",
+    "cancelRequest": "NONE",
+    "payerAccepted": true,
+    "recipientAccepted": false,
+    "createdAt": "2026-11-12T15:59:57.205Z",
+    "updatedAt": "2026-11-12T15:59:57.205Z",
+    "activity": [
+      {
+        "id": "act-1",
+        "agreementId": "agr-test-1794499197181",
+        "timestamp": "2026-11-12T15:59:57.205Z",
+        "actor": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+        "actorRole": "PAYER",
+        "type": "CREATED",
+        "title": "Agreement Created & Accepted by Payer",
+        "description": "Initial terms drafted."
+      }
+    ]
+  },
+  "agr-test-1794499223429": {
+    "id": "agr-test-1794499223429",
+    "transactionType": "WORK",
+    "title": "Website Redesign & Brand Assets",
+    "description": "Design responsive components and export Figma tokens",
+    "terms": {
+      "amount": "500.00",
+      "asset": "USDC",
+      "payer": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "recipient": "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
+      "approver": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "title": "Website Redesign & Brand Assets",
+      "description": "Design responsive components and export Figma tokens",
+      "deliverables": [
+        "Figma source",
+        "React component kit"
+      ],
+      "condition": "Payer approves submitted Figma design and code",
+      "cancellationTerms": "Mutual cancellation permitted prior to review",
+      "deadline": "2026-11-20T00:00:00.000Z",
+      "contractId": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "domain": "trustflow.stellar.escrow.v1",
+      "network": "testnet",
+      "version": 1
+    },
+    "canonicalHash": "77851fae367926acaeb287e03cd39c700527196d2ad5c6aea97d14b945daff05",
+    "version": 1,
+    "status": "CREATED",
+    "cancelRequest": "NONE",
+    "payerAccepted": true,
+    "recipientAccepted": false,
+    "createdAt": "2026-11-12T16:00:23.452Z",
+    "updatedAt": "2026-11-12T16:00:23.453Z",
+    "activity": [
+      {
+        "id": "act-1",
+        "agreementId": "agr-test-1794499223429",
+        "timestamp": "2026-11-12T16:00:23.453Z",
+        "actor": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+        "actorRole": "PAYER",
+        "type": "CREATED",
+        "title": "Agreement Created & Accepted by Payer",
+        "description": "Initial terms drafted."
+      }
+    ]
+  },
+  "agr-test-1794500254386": {
+    "id": "agr-test-1794500254386",
+    "transactionType": "WORK",
+    "title": "Website Redesign & Brand Assets",
+    "description": "Design responsive components and export Figma tokens",
+    "terms": {
+      "amount": "500.00",
+      "asset": "USDC",
+      "payer": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "recipient": "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
+      "approver": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "title": "Website Redesign & Brand Assets",
+      "description": "Design responsive components and export Figma tokens",
+      "deliverables": [
+        "Figma source",
+        "React component kit"
+      ],
+      "condition": "Payer approves submitted Figma design and code",
+      "cancellationTerms": "Mutual cancellation permitted prior to review",
+      "deadline": "2026-11-20T00:00:00.000Z",
+      "contractId": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "domain": "trustflow.stellar.escrow.v1",
+      "network": "testnet",
+      "version": 1
+    },
+    "canonicalHash": "77851fae367926acaeb287e03cd39c700527196d2ad5c6aea97d14b945daff05",
+    "version": 1,
+    "status": "CREATED",
+    "cancelRequest": "NONE",
+    "payerAccepted": true,
+    "recipientAccepted": false,
+    "createdAt": "2026-11-12T16:17:34.413Z",
+    "updatedAt": "2026-11-12T16:17:34.413Z",
+    "activity": [
+      {
+        "id": "act-1",
+        "agreementId": "agr-test-1794500254386",
+        "timestamp": "2026-11-12T16:17:34.413Z",
+        "actor": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+        "actorRole": "PAYER",
+        "type": "CREATED",
+        "title": "Agreement Created & Accepted by Payer",
+        "description": "Initial terms drafted."
+      }
+    ]
+  },
+  "agr-test-1794500347552": {
+    "id": "agr-test-1794500347552",
+    "transactionType": "WORK",
+    "title": "Website Redesign & Brand Assets",
+    "description": "Design responsive components and export Figma tokens",
+    "terms": {
+      "amount": "500.00",
+      "asset": "USDC",
+      "payer": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "recipient": "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
+      "approver": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "title": "Website Redesign & Brand Assets",
+      "description": "Design responsive components and export Figma tokens",
+      "deliverables": [
+        "Figma source",
+        "React component kit"
+      ],
+      "condition": "Payer approves submitted Figma design and code",
+      "cancellationTerms": "Mutual cancellation permitted prior to review",
+      "deadline": "2026-11-20T00:00:00.000Z",
+      "contractId": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "domain": "trustflow.stellar.escrow.v1",
+      "network": "testnet",
+      "version": 1
+    },
+    "canonicalHash": "77851fae367926acaeb287e03cd39c700527196d2ad5c6aea97d14b945daff05",
+    "version": 1,
+    "status": "CREATED",
+    "cancelRequest": "NONE",
+    "payerAccepted": true,
+    "recipientAccepted": false,
+    "createdAt": "2026-11-12T16:19:07.576Z",
+    "updatedAt": "2026-11-12T16:19:07.576Z",
+    "activity": [
+      {
+        "id": "act-1",
+        "agreementId": "agr-test-1794500347552",
+        "timestamp": "2026-11-12T16:19:07.576Z",
+        "actor": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+        "actorRole": "PAYER",
+        "type": "CREATED",
+        "title": "Agreement Created & Accepted by Payer",
+        "description": "Initial terms drafted."
+      }
+    ]
+  },
+  "agr-test-1794500766305": {
+    "id": "agr-test-1794500766305",
+    "transactionType": "WORK",
+    "title": "Website Redesign & Brand Assets",
+    "description": "Design responsive components and export Figma tokens",
+    "terms": {
+      "amount": "500.00",
+      "asset": "USDC",
+      "payer": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "recipient": "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
+      "approver": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+      "title": "Website Redesign & Brand Assets",
+      "description": "Design responsive components and export Figma tokens",
+      "deliverables": [
+        "Figma source",
+        "React component kit"
+      ],
+      "condition": "Payer approves submitted Figma design and code",
+      "cancellationTerms": "Mutual cancellation permitted prior to review",
+      "deadline": "2026-11-20T00:00:00.000Z",
+      "contractId": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      "domain": "trustflow.stellar.escrow.v1",
+      "network": "testnet",
+      "version": 1
+    },
+    "canonicalHash": "77851fae367926acaeb287e03cd39c700527196d2ad5c6aea97d14b945daff05",
+    "version": 1,
+    "status": "CREATED",
+    "cancelRequest": "NONE",
+    "payerAccepted": true,
+    "recipientAccepted": false,
+    "createdAt": "2026-11-12T16:26:06.331Z",
+    "updatedAt": "2026-11-12T16:26:06.331Z",
+    "activity": [
+      {
+        "id": "act-1",
+        "agreementId": "agr-test-1794500766305",
+        "timestamp": "2026-11-12T16:26:06.331Z",
         "actor": "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
         "actorRole": "PAYER",
         "type": "CREATED",

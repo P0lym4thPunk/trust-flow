@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { X, ShieldCheck, Mail, Sparkles, ArrowRight, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
+import { X, ShieldCheck, Mail, ArrowRight, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
 import { useAuth } from "../lib/auth/AuthContext";
 
 export const AuthModal: React.FC = () => {
@@ -9,7 +9,6 @@ export const AuthModal: React.FC = () => {
     sendOtpCode,
     verifyOtpCode,
     loginWithGoogle,
-    isPrivyConfigured,
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"email" | "google">("email");
@@ -78,7 +77,7 @@ export const AuthModal: React.FC = () => {
       });
     } catch (err: any) {
       setStep("input_email");
-      setErrorMessage(err.message || "Google authentication failed.");
+      setErrorMessage(err.message || "Google sign-in failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -95,9 +94,9 @@ export const AuthModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md bg-white dark:bg-[#121824] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden">
-        {/* Header Ribbon */}
-        <div className="h-1.5 w-full bg-gradient-to-r from-[#4A2574] via-[#F5D03A] to-[#4A2574]" />
+      <div className="relative w-full max-w-md bg-white dark:bg-[#121824] rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
+        {/* Stellar Yellow Highlight Bar */}
+        <div className="h-1.5 w-full bg-[#F5D03A]" />
 
         <div className="p-6">
           {/* Close button */}
@@ -109,70 +108,53 @@ export const AuthModal: React.FC = () => {
             <X className="w-5 h-5" />
           </button>
 
-          {/* Brand & Heading */}
-          <div className="flex items-center gap-2.5 mb-2">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#4A2574] to-[#F5D03A] flex items-center justify-center text-white shadow-xs">
-              <ShieldCheck className="w-5 h-5 text-white" />
+          {/* Heading */}
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-[#4A2574] flex items-center justify-center text-[#F5D03A]">
+              <ShieldCheck className="w-5 h-5 text-[#F5D03A]" />
             </div>
             <div>
-              <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                Account & Embedded Wallet
+              <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight font-display">
+                Sign in to TrustFlow
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                Non-custodial Stellar Testnet keypair provisioned automatically.
+              <p className="text-xs text-slate-500 font-medium">
+                Simple, secure access to your payments and account
               </p>
             </div>
-          </div>
-
-          {/* Engine Status Badge */}
-          <div className="mb-3 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] flex items-center justify-between">
-            <span className="text-slate-500 font-medium">Auth & Wallet Engine:</span>
-            {isPrivyConfigured ? (
-              <span className="inline-flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Pollar / Privy Live
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400" title="Set VITE_PRIVY_APP_ID in .env from dashboard.privy.io for live Privy enclaves">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                Testnet Sandbox Mode
-              </span>
-            )}
           </div>
 
           {/* Provisioning Loader View */}
           {step === "provisioning" ? (
             <div className="py-10 text-center space-y-4">
-              <div className="w-14 h-14 mx-auto rounded-2xl bg-[#F5D03A]/20 dark:bg-[#F5D03A]/10 border border-[#F5D03A]/40 flex items-center justify-center text-[#F5D03A] animate-pulse">
-                <RefreshCw className="w-7 h-7 text-[#D4AF24] dark:text-[#F5D03A] animate-spin" />
+              <div className="w-12 h-12 mx-auto rounded-xl bg-[#F5D03A]/20 flex items-center justify-center text-slate-900 dark:text-[#F5D03A]">
+                <RefreshCw className="w-6 h-6 animate-spin text-slate-900 dark:text-[#F5D03A]" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  Provisioning Embedded Stellar Wallet...
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Preparing your account...
                 </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs mx-auto">
-                  Generating ed25519 keypair and requesting testnet funding via Friendbot.
+                <p className="text-xs text-slate-500 max-w-xs mx-auto">
+                  Setting up your secure account and test funds. This only takes a moment.
                 </p>
               </div>
             </div>
           ) : (
             <>
               {/* Tab Selector */}
-              <div className="flex p-1 bg-slate-100 dark:bg-slate-900 rounded-xl my-4 text-xs font-bold">
+              <div className="flex rounded-lg bg-slate-100 dark:bg-slate-800 p-1 mb-5">
                 <button
                   type="button"
                   onClick={() => {
                     setActiveTab("email");
                     setErrorMessage(null);
                   }}
-                  className={`flex-1 py-2 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${
                     activeTab === "email"
-                      ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs"
-                      : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+                      ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs"
+                      : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
                   }`}
                 >
-                  <Mail className="w-3.5 h-3.5" />
-                  Email OTP Code
+                  Email code
                 </button>
                 <button
                   type="button"
@@ -180,146 +162,130 @@ export const AuthModal: React.FC = () => {
                     setActiveTab("google");
                     setErrorMessage(null);
                   }}
-                  className={`flex-1 py-2 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${
                     activeTab === "google"
-                      ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs"
-                      : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+                      ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs"
+                      : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
                   }`}
                 >
-                  <span className="text-sm">🌐</span>
-                  Google Auth
+                  Google
                 </button>
               </div>
 
-              {/* Error feedback */}
+              {/* Error Banner */}
               {errorMessage && (
-                <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 flex items-center gap-2 text-xs text-red-700 dark:text-red-300">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMessage}</span>
                 </div>
               )}
 
-              {/* Email OTP Flow */}
-              {activeTab === "email" && step === "input_email" && (
-                <form onSubmit={handleSendCode} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      Email Address
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      placeholder="you@example.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#F5D03A]"
-                    />
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      We use passwordless one-time verification codes (OTP).
-                    </p>
-                  </div>
+              {/* Tab 1: Email OTP */}
+              {activeTab === "email" && (
+                <div>
+                  {step === "input_email" ? (
+                    <form onSubmit={handleSendCode} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                          Email address
+                        </label>
+                        <div className="relative">
+                          <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                          <input
+                            type="email"
+                            required
+                            placeholder="you@example.com"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2 text-sm bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white placeholder:text-slate-400"
+                          />
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          We will send a 6-digit verification code to sign you in.
+                        </p>
+                      </div>
 
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full py-2.5 px-4 rounded-xl bg-[#4A2574] hover:bg-[#361A53] text-white text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
-                  >
-                    {loading ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Sending Code...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>Send 6-Digit Code</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-                </form>
-              )}
-
-              {/* OTP Code Verification */}
-              {activeTab === "email" && step === "enter_code" && (
-                <form onSubmit={handleVerifyCode} className="space-y-4">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                        Verification Code
-                      </label>
                       <button
-                        type="button"
-                        onClick={() => setStep("input_email")}
-                        className="text-[11px] text-[#4A2574] dark:text-[#F5D03A] underline cursor-pointer"
+                        type="submit"
+                        disabled={loading}
+                        className="w-full py-2.5 px-4 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] disabled:opacity-50 rounded-lg shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                       >
-                        Change Email ({email})
+                        {loading ? "Sending code..." : "Continue with email"}
+                        <ArrowRight className="w-3.5 h-3.5" />
                       </button>
-                    </div>
-
-                    <input
-                      type="text"
-                      maxLength={6}
-                      required
-                      placeholder="123456"
-                      value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-                      className="w-full px-3.5 py-2.5 text-center tracking-widest font-mono text-lg font-bold rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#F5D03A]"
-                    />
-
-                    {/* Quick Demo Hint for Judges / Evaluators */}
-                    {demoHintCode && (
-                      <div className="mt-2 p-2 rounded-lg bg-[#F5D03A]/15 border border-[#F5D03A]/40 flex items-center justify-between text-xs">
-                        <span className="text-slate-800 dark:text-slate-200">
-                          Demo Code: <strong className="font-mono">{demoHintCode}</strong>
-                        </span>
+                    </form>
+                  ) : (
+                    <form onSubmit={handleVerifyCode} className="space-y-4">
+                      <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs">
+                        <span className="text-slate-500">Code sent to: </span>
+                        <strong className="text-slate-900 dark:text-white">{email}</strong>
                         <button
                           type="button"
-                          onClick={() => setOtpCode(demoHintCode)}
-                          className="text-[11px] font-bold text-[#4A2574] dark:text-[#F5D03A] underline cursor-pointer"
+                          onClick={() => setStep("input_email")}
+                          className="ml-2 text-xs text-[#4A2574] dark:text-[#F5D03A] underline cursor-pointer"
                         >
-                          Auto-fill
+                          Change
                         </button>
                       </div>
-                    )}
-                  </div>
 
-                  <button
-                    type="submit"
-                    disabled={loading || otpCode.length < 6}
-                    className="w-full py-2.5 px-4 rounded-xl bg-[#4A2574] hover:bg-[#361A53] text-white text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 shadow-xs"
-                  >
-                    {loading ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Verifying...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                        <span>Verify & Access Wallet</span>
-                      </>
-                    )}
-                  </button>
-                </form>
+                      {demoHintCode && (
+                        <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-xs flex items-center justify-between text-amber-900 dark:text-amber-200">
+                          <span>Verification code: <strong>{demoHintCode}</strong></span>
+                          <button
+                            type="button"
+                            onClick={() => setOtpCode(demoHintCode)}
+                            className="text-[11px] font-bold underline cursor-pointer"
+                          >
+                            Fill code
+                          </button>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                          Enter 6-digit code
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={6}
+                          required
+                          placeholder="123456"
+                          value={otpCode}
+                          onChange={(e) => setOtpCode(e.target.value)}
+                          className="w-full py-2 text-center text-lg tracking-widest font-mono font-bold bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={loading || otpCode.length < 6}
+                        className="w-full py-2.5 px-4 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] disabled:opacity-50 rounded-lg shadow-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        {loading ? "Verifying..." : "Confirm & enter"}
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                      </button>
+                    </form>
+                  )}
+                </div>
               )}
 
-              {/* Google Social Login Flow */}
+              {/* Tab 2: Google Sign-in */}
               {activeTab === "google" && (
-                <div className="space-y-4 py-2">
-                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                    Authenticate securely with your Google profile. TrustFlow will associate or recover your dedicated Stellar Testnet keypair automatically.
+                <div className="space-y-4">
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Sign in with your Google account. Your payment balance will be ready immediately.
                   </p>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      Account Email
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                      Account name (optional)
                     </label>
                     <input
-                      type="email"
-                      placeholder="alex.stellar@example.com"
+                      type="text"
+                      placeholder="e.g. Alex Rivera"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#F5D03A]"
+                      className="w-full px-3 py-2 text-sm bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white placeholder:text-slate-400"
                     />
                   </div>
 
@@ -327,19 +293,20 @@ export const AuthModal: React.FC = () => {
                     type="button"
                     onClick={handleGoogleLogin}
                     disabled={loading}
-                    className="w-full py-3 px-4 rounded-xl border border-slate-300 dark:border-slate-700 hover:border-[#F5D03A] bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-xs"
+                    className="w-full py-2.5 px-4 text-xs font-bold text-slate-800 dark:text-slate-100 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-700 transition-colors flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <span className="text-base">🌐</span>
-                    <span>Sign in with Google</span>
+                    <span>Continue with Google</span>
                   </button>
                 </div>
               )}
             </>
           )}
 
-          {/* Privacy Note */}
-          <div className="mt-5 pt-4 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-400 text-center">
-            🔐 Non-custodial keypair isolation. Private keys are never sent to frontend logs or third parties.
+          <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800/80 text-center">
+            <span className="text-[11px] text-slate-400">
+              Test mode enabled · Free testnet currency
+            </span>
           </div>
         </div>
       </div>

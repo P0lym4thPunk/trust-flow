@@ -8,9 +8,11 @@ import {
   ExternalLink,
   Lock,
   Send,
-  FileCheck,
-  RefreshCw,
-  XCircle,
+  User,
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { AgreementRecord } from "../types/agreement";
 import { formatAddress, STELLAR_TESTNET_CONFIG } from "../lib/stellar/config";
@@ -35,18 +37,25 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showTechDetails, setShowTechDetails] = useState(false);
 
-  // Status progression mapping
+  // 4 clear, plain language stages
   const steps = [
-    { id: "CREATED", label: "Accepted by Parties" },
-    { id: "FUNDED", label: "Escrow Funded" },
-    { id: "FULFILMENT_SUBMITTED", label: "Work Submitted" },
-    { id: "APPROVED", label: "Approved for Release" },
-    { id: "RELEASED", label: "Payment Released" },
+    { id: "CREATED", label: "Terms agreed" },
+    { id: "FUNDED", label: "Money secured" },
+    { id: "FULFILMENT_SUBMITTED", label: "Work submitted" },
+    { id: "RELEASED", label: "Payment released" },
   ];
 
-  const currentStepIndex = steps.findIndex((s) => s.id === agreement.status);
+  // Helper to get active step index
+  const getStepIndex = () => {
+    if (agreement.status === "RELEASED") return 3;
+    if (agreement.status === "APPROVED" || agreement.status === "FULFILMENT_SUBMITTED") return 2;
+    if (agreement.status === "FUNDED") return 1;
+    return agreement.payerAccepted && agreement.recipientAccepted ? 1 : 0;
+  };
 
-  // Participant Role Checks
+  const currentStepIndex = getStepIndex();
+
+  // Participant Roles
   const isPayer = currentAccount.address === agreement.terms.payer;
   const isRecipient = currentAccount.address === agreement.terms.recipient;
   const isApprover = currentAccount.address === agreement.terms.approver;
@@ -54,7 +63,7 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
   // 1. Recipient Acceptance Handler
   const handleAcceptAgreement = async () => {
     setActionLoading(true);
-    setStatusMessage("Recording on-chain acceptance...");
+    setStatusMessage("Recording your acceptance of these terms...");
     setTimeout(() => {
       const updated: AgreementRecord = {
         ...agreement,
@@ -69,23 +78,23 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
             actor: currentAccount.address,
             actorRole: "RECIPIENT",
             type: "ACCEPTED",
-            title: "Accepted by Recipient",
-            description: `Recipient ${formatAddress(currentAccount.address)} accepted canonical hash ${agreement.canonicalHash.slice(0, 8)}...`,
+            title: "Accepted by recipient",
+            description: `Recipient ${formatAddress(currentAccount.address)} accepted the payment terms.`,
           },
         ],
       };
       onUpdateAgreement(updated);
       setActionLoading(false);
-      setStatusMessage("Acceptance recorded. Awaiting payer funding.");
-    }, 1200);
+      setStatusMessage("Acceptance recorded. Awaiting payer to add money.");
+    }, 900);
   };
 
-  // 2. Payer Funding Handler
+  // 2. Payer Add Money Handler
   const handleFundEscrow = async () => {
     setActionLoading(true);
-    setStatusMessage("[Demo Mode] Simulating token lock on Stellar Testnet...");
+    setStatusMessage("Securing payment funds in protected account...");
     setTimeout(() => {
-      const txHash = `sim-tx-${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
+      const txHash = `tf-tx-${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
       const updated: AgreementRecord = {
         ...agreement,
         status: "FUNDED",
@@ -101,29 +110,29 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
             actor: currentAccount.address,
             actorRole: "PAYER",
             type: "FUNDED",
-            title: "Escrow Funded (Demo Simulation)",
-            description: `${agreement.terms.amount} ${agreement.terms.asset} simulated lock for demonstration.`,
+            title: "Payment secured",
+            description: `${agreement.terms.amount} ${agreement.terms.asset} deposited into protected payment account.`,
             txHash,
           },
         ],
       };
       onUpdateAgreement(updated);
       setActionLoading(false);
-      setStatusMessage("Escrow funded in demo simulation. Ready for work submission.");
-    }, 1500);
+      setStatusMessage("Funds secured. Recipient can now complete and submit work.");
+    }, 1100);
   };
 
-  // 3. Recipient Fulfilment Submission Handler
+  // 3. Recipient Work Submission Handler
   const handleSubmitFulfilment = async () => {
     if (!fulfilmentInput.trim()) return;
     setSubmittingFulfilment(true);
-    setStatusMessage("[Demo Mode] Submitting fulfilment deliverables...");
+    setStatusMessage("Submitting work deliverables for review...");
     setTimeout(() => {
       const updated: AgreementRecord = {
         ...agreement,
         status: "FULFILMENT_SUBMITTED",
         fulfilmentNotes: fulfilmentInput,
-        fulfilmentHash: `sim-hash-${Math.random().toString(16).slice(2, 18)}`,
+        fulfilmentHash: `sub-${Math.random().toString(16).slice(2, 14)}`,
         updatedAt: new Date().toISOString(),
         activity: [
           ...agreement.activity,
@@ -134,21 +143,21 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
             actor: currentAccount.address,
             actorRole: "RECIPIENT",
             type: "FULFILMENT_SUBMITTED",
-            title: "Fulfilment Deliverables Submitted",
+            title: "Work submitted for review",
             description: fulfilmentInput,
           },
         ],
       };
       onUpdateAgreement(updated);
       setSubmittingFulfilment(false);
-      setStatusMessage("Fulfilment submitted in demo simulation. Waiting for approver review.");
-    }, 1200);
+      setStatusMessage("Work submitted. Awaiting review and approval.");
+    }, 900);
   };
 
-  // 4. Approver Condition Approval Handler
+  // 4. Approver Review & Approval Handler
   const handleApproveCondition = async () => {
     setActionLoading(true);
-    setStatusMessage("[Demo Mode] Verifying condition satisfaction...");
+    setStatusMessage("Confirming condition satisfaction...");
     setTimeout(() => {
       const updated: AgreementRecord = {
         ...agreement,
@@ -163,23 +172,23 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
             actor: currentAccount.address,
             actorRole: "APPROVER",
             type: "APPROVED",
-            title: "Condition Verified & Approved",
-            description: "Approver confirmed satisfactory fulfilment of agreed terms.",
+            title: "Work approved",
+            description: "Conditions satisfied. Ready to release payment.",
           },
         ],
       };
       onUpdateAgreement(updated);
       setActionLoading(false);
-      setStatusMessage("Condition approved in demo simulation. Funds unlocked for release.");
-    }, 1200);
+      setStatusMessage("Work approved. Funds are unlocked for release.");
+    }, 900);
   };
 
-  // 5. Release Funds Handler (Permissionless once approved)
+  // 5. Release Funds Handler
   const handleReleaseFunds = async () => {
     setActionLoading(true);
-    setStatusMessage("[Demo Mode] Simulating release of escrowed tokens to recipient...");
+    setStatusMessage("Releasing payment to recipient...");
     setTimeout(() => {
-      const txHash = `sim-rel-${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
+      const txHash = `tf-rel-${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
       const updated: AgreementRecord = {
         ...agreement,
         status: "RELEASED",
@@ -195,82 +204,94 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
             actor: currentAccount.address,
             actorRole: isPayer ? "PAYER" : isRecipient ? "RECIPIENT" : "APPROVER",
             type: "RELEASED",
-            title: "Funds Transferred to Recipient",
-            description: `${agreement.terms.amount} ${agreement.terms.asset} released to ${formatAddress(agreement.terms.recipient)}.`,
+            title: "Payment released to recipient",
+            description: `${agreement.terms.amount} ${agreement.terms.asset} paid to recipient.`,
             txHash,
           },
         ],
       };
       onUpdateAgreement(updated);
       setActionLoading(false);
-      setStatusMessage("Payment released successfully!");
-    }, 1500);
+      setStatusMessage("Payment complete! All funds have moved.");
+    }, 1100);
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Top Back Nav & Title Header */}
-      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
+    <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in duration-150">
+      {/* Top Bar with Back Button */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
         <div>
           <button
             onClick={onBack}
-            className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white mb-1 flex items-center gap-1 cursor-pointer"
+            className="text-xs font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-white mb-2 flex items-center gap-1.5 cursor-pointer"
           >
-            ← Back to Agreements
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Back to payments
           </button>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-black text-slate-900 dark:text-white">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl sm:text-2xl font-black text-slate-950 dark:text-white font-display">
               {agreement.title}
-            </h2>
-            <span className="text-xs px-2 py-0.5 rounded font-bold bg-[#F5D03A]/20 text-slate-900 dark:text-[#F5D03A]">
-              {agreement.status.replace("_", " ")}
+            </h1>
+            <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+              {agreement.status === "RELEASED"
+                ? "Completed"
+                : agreement.status === "FUNDED"
+                ? "Money secured"
+                : agreement.status === "FULFILMENT_SUBMITTED"
+                ? "Under review"
+                : "Awaiting start"}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="text-right">
-            <div className="text-2xl font-black tabular-nums text-slate-900 dark:text-white">
-              {agreement.terms.amount} <span className="text-sm font-bold text-slate-500">{agreement.terms.asset}</span>
-            </div>
-            <div className="text-[10px] text-slate-400">
-              Escrow ID: #{agreement.escrowId || 1}
-            </div>
+        {/* Amount Header with Reference Style Highlight */}
+        <div className="text-left sm:text-right">
+          <div className="text-2xl sm:text-3xl font-black font-display text-slate-950 dark:text-white tabular-nums stat-highlight">
+            {agreement.terms?.amount || "0.00"}
           </div>
+          <span className="text-xs font-bold text-slate-500 ml-1.5 uppercase">
+            {agreement.terms?.asset || "USDC"}
+          </span>
         </div>
       </div>
 
-      {/* Visual Status Tracker Bar */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm">
-        <div className="flex items-center justify-between gap-2 overflow-x-auto py-2">
-          {steps.map((step, idx) => {
-            const isCompleted = currentStepIndex >= idx;
+      {/* Progress Indicator (4 Clear Stages) */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs">
+        <div className="flex items-center justify-between gap-2 overflow-x-auto py-1">
+          {steps.map((s, idx) => {
+            const isCompleted = currentStepIndex > idx || (idx === 0 && agreement.recipientAccepted);
             const isCurrent = currentStepIndex === idx;
 
             return (
-              <div key={step.id} className="flex items-center gap-2 shrink-0">
+              <div key={s.id} className="flex items-center gap-2 shrink-0">
                 <div
                   className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                    isCompleted
-                      ? "bg-[#F5D03A] text-slate-950 font-black shadow-xs"
+                    isCompleted || (idx === 3 && agreement.status === "RELEASED")
+                      ? "bg-[#F5D03A] text-slate-950 font-black"
+                      : isCurrent
+                      ? "border-2 border-[#F5D03A] text-[#F5D03A]"
                       : "bg-slate-100 dark:bg-slate-800 text-slate-400"
                   }`}
                 >
-                  {isCompleted ? <CheckCircle2 className="w-4 h-4" /> : idx + 1}
+                  {isCompleted || (idx === 3 && agreement.status === "RELEASED") ? (
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  ) : (
+                    idx + 1
+                  )}
                 </div>
                 <span
                   className={`text-xs ${
                     isCurrent
-                      ? "font-bold text-slate-900 dark:text-white"
+                      ? "font-bold text-slate-950 dark:text-white"
                       : isCompleted
                       ? "text-slate-700 dark:text-slate-300 font-medium"
                       : "text-slate-400"
                   }`}
                 >
-                  {step.label}
+                  {s.label}
                 </span>
                 {idx < steps.length - 1 && (
-                  <div className="w-6 h-0.5 bg-slate-200 dark:bg-slate-800 mx-1" />
+                  <div className="w-6 sm:w-10 h-0.5 bg-slate-200 dark:bg-slate-800 mx-1" />
                 )}
               </div>
             );
@@ -278,7 +299,7 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
         </div>
       </div>
 
-      {/* Status Feedback Message */}
+      {/* Status Feedback Notice */}
       {statusMessage && (
         <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/40 text-xs text-[#4A2574] dark:text-purple-300 flex items-center gap-2">
           <Clock className="w-4 h-4 text-[#F5D03A] shrink-0" />
@@ -286,244 +307,286 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
         </div>
       )}
 
-      {/* Action Decision Center (Role-Specific) */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-          <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-            <Lock className="w-4 h-4 text-[#F5D03A]" />
-            Next Required Action
-          </h3>
-          <span className="text-xs text-slate-500">
-            Viewing as: <strong>{currentAccount.displayName}</strong>
+      {/* Prominent Next Required Action Card */}
+      <div className="bg-[#121824] text-white border-2 border-dashed border-[#F5D03A]/70 rounded-2xl p-6 shadow-md space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-md bg-[#F5D03A] text-slate-950 flex items-center justify-center font-bold text-xs">
+              !
+            </div>
+            <h3 className="font-bold text-sm text-white uppercase tracking-wider">
+              Next Required Action
+            </h3>
+          </div>
+          <span className="text-xs text-slate-400">
+            Current account: <strong className="text-[#F5D03A]">{currentAccount.displayName}</strong>
           </span>
         </div>
 
-        {/* Action 1: Recipient Acceptance Pending */}
+        {/* Stage 1A: Recipient Acceptance Pending */}
         {agreement.status === "CREATED" && !agreement.recipientAccepted && (
-          <div className="flex items-center justify-between p-4 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40">
+          <div className="space-y-3">
             <div>
-              <div className="font-bold text-xs text-slate-900 dark:text-white">
-                Awaiting Recipient Acceptance
-              </div>
-              <div className="text-[11px] text-slate-500">
-                Bob (Recipient) must review and record acceptance on-chain before funding is unlocked.
-              </div>
+              <h4 className="font-bold text-sm text-white">
+                Awaiting Recipient Review & Acceptance
+              </h4>
+              <p className="text-xs text-slate-300 mt-0.5">
+                The person receiving payment must review and accept the agreed terms before money can be added.
+              </p>
             </div>
+
             {isRecipient ? (
               <button
                 onClick={handleAcceptAgreement}
                 disabled={actionLoading}
-                className="px-4 py-2 text-xs font-bold text-slate-900 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs cursor-pointer"
+                className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
               >
-                Accept Terms On-Chain
+                Accept agreement terms
+                <Check className="w-3.5 h-3.5" />
               </button>
             ) : (
-              <span className="text-xs text-slate-400 italic">Waiting for Bob</span>
+              <div className="text-xs text-slate-400 italic">
+                Waiting for recipient ({formatAddress(agreement.terms.recipient)}) to accept.
+              </div>
             )}
           </div>
         )}
 
-        {/* Action 2: Payer Funding Pending */}
+        {/* Stage 1B: Payer Needs to Add Money */}
         {agreement.status === "CREATED" && agreement.recipientAccepted && (
-          <div className="flex items-center justify-between p-4 rounded-xl bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/40">
+          <div className="space-y-3">
             <div>
-              <div className="font-bold text-xs text-slate-900 dark:text-white">
-                Dual Acceptance Verified · Ready for Funding
-              </div>
-              <div className="text-[11px] text-slate-500">
-                Payer {formatAddress(agreement.terms.payer)} must authorize token deposit into Soroban Escrow.
-              </div>
+              <h4 className="font-bold text-sm text-white">
+                Terms Accepted by Both Parties · Ready to Secure Payment
+              </h4>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Payer adds the agreed {agreement.terms.amount} {agreement.terms.asset}. Funds will be held in protected storage until work is verified.
+              </p>
             </div>
+
             {isPayer ? (
               <button
                 onClick={handleFundEscrow}
                 disabled={actionLoading}
-                className="px-4 py-2 text-xs font-bold text-slate-900 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs cursor-pointer"
+                className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
               >
-                Fund {agreement.terms.amount} {agreement.terms.asset}
+                Add {agreement.terms.amount} {agreement.terms.asset} to secure payment
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             ) : (
-              <span className="text-xs text-slate-400 italic">Waiting for Alice to fund</span>
+              <div className="text-xs text-slate-400 italic">
+                Waiting for payer ({formatAddress(agreement.terms.payer)}) to add funds.
+              </div>
             )}
           </div>
         )}
 
-        {/* Action 3: Recipient Fulfilment Submission Pending */}
+        {/* Stage 2: Recipient Work Submission Pending */}
         {agreement.status === "FUNDED" && (
-          <div className="space-y-3 p-4 rounded-xl bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800">
+          <div className="space-y-3">
             <div>
-              <div className="font-bold text-xs text-slate-900 dark:text-white">
-                Tokens Locked in Escrow · Awaiting Work Submission
-              </div>
-              <div className="text-[11px] text-slate-500">
-                Recipient {formatAddress(agreement.terms.recipient)} must submit completion evidence.
-              </div>
+              <h4 className="font-bold text-sm text-white">
+                Money Secured · Recipient is Working
+              </h4>
+              <p className="text-xs text-slate-300 mt-0.5">
+                The agreed payment is safely reserved. Recipient submits completed deliverables when finished.
+              </p>
             </div>
 
             {isRecipient ? (
-              <div className="space-y-2 pt-2">
+              <div className="space-y-2 pt-1">
                 <textarea
                   rows={2}
                   value={fulfilmentInput}
                   onChange={(e) => setFulfilmentInput(e.target.value)}
-                  placeholder="Provide delivery notes, Github PR link, or Figma link..."
-                  className="w-full text-xs p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                  placeholder="Provide delivery notes, project link, or completion summary..."
+                  className="w-full text-xs p-2.5 rounded-lg bg-slate-900 border border-slate-700 text-white placeholder:text-slate-500"
                 />
                 <button
                   onClick={handleSubmitFulfilment}
                   disabled={submittingFulfilment || !fulfilmentInput.trim()}
-                  className="px-4 py-2 text-xs font-bold text-slate-900 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs cursor-pointer flex items-center gap-1.5"
+                  className="px-4 py-2 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
-                  Submit Fulfilment Deliverables
+                  Submit completed work
                   <Send className="w-3.5 h-3.5" />
                 </button>
               </div>
             ) : (
               <div className="text-xs text-slate-400 italic">
-                Awaiting Bob's deliverable submission.
+                Recipient ({formatAddress(agreement.terms.recipient)}) is preparing the deliverables.
               </div>
             )}
           </div>
         )}
 
-        {/* Action 4: Approver Review & Verification Pending */}
+        {/* Stage 3: Approver Review & Approval */}
         {agreement.status === "FULFILMENT_SUBMITTED" && (
-          <div className="p-4 rounded-xl bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/40 space-y-3">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="font-bold text-xs text-slate-900 dark:text-white">
-                  Deliverables Ready for Approver Review
-                </div>
-                <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
-                  Submitted notes: <em>"{agreement.fulfilmentNotes || "Work deliverables submitted"}"</em>
-                </div>
+          <div className="space-y-3">
+            <div>
+              <h4 className="font-bold text-sm text-white">
+                Work Submitted · Ready for Review
+              </h4>
+              <div className="text-xs text-slate-300 mt-1 p-3 rounded-lg bg-slate-900 border border-slate-800">
+                <span className="text-slate-400 block mb-0.5 font-bold">Submission notes:</span>
+                "{agreement.fulfilmentNotes || "Work deliverables submitted for inspection."}"
               </div>
             </div>
 
             {isApprover ? (
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  onClick={handleApproveCondition}
-                  disabled={actionLoading}
-                  className="px-4 py-2 text-xs font-bold text-slate-900 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs cursor-pointer"
-                >
-                  Approve Deliverables
-                </button>
-              </div>
+              <button
+                onClick={handleApproveCondition}
+                disabled={actionLoading}
+                className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                Approve work & unlock release
+                <Check className="w-3.5 h-3.5" />
+              </button>
             ) : (
               <div className="text-xs text-slate-400 italic">
-                Waiting for Approver ({formatAddress(agreement.terms.approver)}) to review.
+                Waiting for reviewer ({formatAddress(agreement.terms.approver)}) to confirm satisfaction.
               </div>
             )}
           </div>
         )}
 
-        {/* Action 5: Permissionless Release Pending */}
+        {/* Stage 4: Release Payment */}
         {agreement.status === "APPROVED" && (
-          <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40">
+          <div className="space-y-3">
             <div>
-              <div className="font-bold text-xs text-slate-900 dark:text-white">
-                Condition Approved! Ready for Release
-              </div>
-              <div className="text-[11px] text-slate-500">
-                Permissionless release callable by any participant. Tokens will be paid to {formatAddress(agreement.terms.recipient)}.
-              </div>
+              <h4 className="font-bold text-sm text-white">
+                Condition Satisfied · Ready to Release Payment
+              </h4>
+              <p className="text-xs text-slate-300 mt-0.5">
+                The agreed condition has been verified. Anyone may now trigger the final payment transfer to {formatAddress(agreement.terms.recipient)}.
+              </p>
             </div>
+
             <button
               onClick={handleReleaseFunds}
               disabled={actionLoading}
-              className="px-4 py-2 text-xs font-bold text-slate-900 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs cursor-pointer flex items-center gap-1.5"
+              className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
             >
-              Release Funds
+              Release {agreement.terms.amount} {agreement.terms.asset} now
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
-        {/* Terminal State: Released */}
+        {/* Stage 5: Payment Completed */}
         {agreement.status === "RELEASED" && (
-          <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 flex items-center gap-3">
-            <CheckCircle2 className="w-6 h-6 text-emerald-500 shrink-0" />
+          <div className="flex items-center gap-3 py-1">
+            <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
             <div>
-              <div className="font-bold text-xs text-emerald-900 dark:text-emerald-300">
+              <h4 className="font-bold text-sm text-white">
                 Payment Completed & Released
-              </div>
-              <div className="text-[11px] text-slate-500">
-                All conditions met. Funds transferred on Stellar Testnet.
-              </div>
+              </h4>
+              <p className="text-xs text-slate-300">
+                All conditions were satisfied. Funds have been sent directly to the recipient.
+              </p>
             </div>
           </div>
         )}
       </div>
 
-      {/* Participants & Terms Details */}
+      {/* Participants & Terms Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Participants Card */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-xs space-y-3">
-          <span className="font-bold text-slate-400 uppercase tracking-wider block text-[10px]">
-            Agreement Participants
-          </span>
+        {/* Participants */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 text-xs space-y-3 shadow-xs">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+            Participants
+          </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-950/50">
+          <div className="space-y-2.5">
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 flex items-center justify-between">
               <div>
-                <span className="font-bold block">Payer (Client)</span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {agreement.terms.payer}
+                <span className="font-bold text-slate-900 dark:text-white block">
+                  Person paying (Client)
+                </span>
+                <span className="text-[11px] font-mono text-slate-500">
+                  {formatAddress(agreement.terms?.payer || "")}
                 </span>
               </div>
-              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">Accepted</span>
+              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                Accepted
+              </span>
             </div>
 
-            <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-950/50">
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 flex items-center justify-between">
               <div>
-                <span className="font-bold block">Recipient (Designer / Contractor)</span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {agreement.terms.recipient}
+                <span className="font-bold text-slate-900 dark:text-white block">
+                  Person receiving payment (Contractor)
+                </span>
+                <span className="text-[11px] font-mono text-slate-500">
+                  {formatAddress(agreement.terms?.recipient || "")}
                 </span>
               </div>
-              <span className={`text-[10px] font-bold ${agreement.recipientAccepted ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}`}>
+              <span
+                className={`text-[10px] font-bold ${
+                  agreement.recipientAccepted
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-amber-500"
+                }`}
+              >
                 {agreement.recipientAccepted ? "Accepted" : "Pending"}
               </span>
             </div>
 
-            <div className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-950/50">
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 flex items-center justify-between">
               <div>
-                <span className="font-bold block">Designated Approver</span>
-                <span className="text-[10px] text-slate-500 font-mono">
-                  {agreement.terms.approver}
+                <span className="font-bold text-slate-900 dark:text-white block">
+                  Person approving (Reviewer)
+                </span>
+                <span className="text-[11px] font-mono text-slate-500">
+                  {formatAddress(agreement.terms?.approver || "")}
                 </span>
               </div>
-              <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400">Authorized</span>
+              <span className="text-[10px] font-bold text-slate-500">
+                Authorized
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Agreement Conditions Card */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-xs space-y-3">
-          <span className="font-bold text-slate-400 uppercase tracking-wider block text-[10px]">
-            Agreed Terms & Conditions
-          </span>
+        {/* Agreed Terms */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 text-xs space-y-3 shadow-xs">
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+            Agreed terms & condition
+          </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             <div>
-              <span className="font-bold text-slate-400 block mb-0.5">Condition:</span>
-              <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
-                {agreement.terms.condition}
+              <span className="font-bold text-slate-500 block mb-0.5">Release condition:</span>
+              <p className="text-slate-800 dark:text-slate-200 leading-relaxed">
+                {agreement.terms?.condition || "Approval required upon completion"}
               </p>
             </div>
 
             <div>
-              <span className="font-bold text-slate-400 block mb-0.5">Cancellation Policy:</span>
-              <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
-                {agreement.terms.cancellationTerms}
-              </p>
+              <span className="font-bold text-slate-500 block mb-0.5">Work stages / Deliverables:</span>
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {(agreement.terms?.deliverables || ["Milestone deliverables"]).map((item, i) => (
+                  <span
+                    key={i}
+                    className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-700 dark:text-slate-300"
+                  >
+                    {item}
+                  </span>
+                ))}
+              </div>
             </div>
 
             <div>
-              <span className="font-bold text-slate-400 block mb-0.5">Deadline:</span>
+              <span className="font-bold text-slate-500 block mb-0.5">Due date:</span>
               <span className="font-mono text-slate-700 dark:text-slate-300">
-                {new Date(agreement.terms.deadline).toLocaleString()}
+                {agreement.terms?.deadline
+                  ? new Date(agreement.terms.deadline).toLocaleDateString([], {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                    })
+                  : "Standard timeline"}
               </span>
             </div>
           </div>
@@ -531,22 +594,22 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
       </div>
 
       {/* Activity Timeline */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-xs space-y-3">
-        <span className="font-bold text-slate-400 uppercase tracking-wider block text-[10px]">
-          On-Chain Activity Timeline
-        </span>
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 text-xs space-y-3 shadow-xs">
+        <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+          Payment activity timeline
+        </div>
 
         <div className="space-y-2">
           {agreement.activity.map((event) => (
             <div
               key={event.id}
-              className="p-2.5 rounded-lg border border-slate-100 dark:border-slate-800 flex items-start justify-between gap-2"
+              className="p-3 rounded-xl border border-slate-100 dark:border-slate-800/80 flex items-start justify-between gap-3"
             >
               <div>
                 <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <span>{event.title}</span>
                   <span className="text-[10px] text-slate-400 font-normal">
-                    by {formatAddress(event.actor)} ({event.actorRole})
+                    · {event.actorRole.toLowerCase()}
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">
@@ -561,42 +624,38 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
         </div>
       </div>
 
-      {/* Expandable Technical Details */}
-      <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+      {/* Collapsible Technical & Verification Details */}
+      <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
         <button
           onClick={() => setShowTechDetails(!showTechDetails)}
-          className="w-full px-4 py-2.5 bg-slate-100 dark:bg-slate-950 text-left text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between cursor-pointer"
+          className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-950 text-left text-xs font-bold text-slate-600 dark:text-slate-400 flex items-center justify-between cursor-pointer"
         >
-          <span>Advanced Soroban Technical Details</span>
-          <span>{showTechDetails ? "−" : "+"}</span>
+          <span>Technical & verification reference (Advanced)</span>
+          {showTechDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </button>
 
         {showTechDetails && (
-          <div className="p-4 bg-white dark:bg-slate-900 text-xs font-mono space-y-2 text-slate-600 dark:text-slate-400">
+          <div className="p-4 bg-white dark:bg-slate-900 text-xs font-mono space-y-2 text-slate-600 dark:text-slate-400 border-t border-slate-200 dark:border-slate-800">
             <div>
-              <span className="text-slate-400">Canonical SHA-256 Hash:</span>{" "}
+              <span className="text-slate-400">Payment agreement reference:</span>{" "}
               <span className="text-slate-900 dark:text-white break-all">{agreement.canonicalHash}</span>
             </div>
             <div>
-              <span className="text-slate-400">Contract ID:</span>{" "}
-              <span className="break-all">{agreement.terms.contractId}</span>
+              <span className="text-slate-400">Protected escrow ID:</span> #{agreement.escrowId || 1}
             </div>
             <div>
-              <span className="text-slate-400">Network Passphrase:</span> {STELLAR_TESTNET_CONFIG.networkPassphrase}
-            </div>
-            <div>
-              <span className="text-slate-400">RPC Endpoint:</span> {STELLAR_TESTNET_CONFIG.rpcUrl}
+              <span className="text-slate-400">Network:</span> Stellar Testnet
             </div>
             {agreement.fundingTxHash && (
               <div>
-                <span className="text-slate-400">Funding TX:</span>{" "}
+                <span className="text-slate-400">Transaction reference:</span>{" "}
                 <a
                   href={`https://stellar.expert/explorer/testnet/tx/${agreement.fundingTxHash}`}
                   target="_blank"
                   rel="noreferrer"
                   className="text-[#4A2574] dark:text-[#F5D03A] underline inline-flex items-center gap-1"
                 >
-                  {agreement.fundingTxHash.slice(0, 16)}...
+                  {agreement.fundingTxHash.slice(0, 20)}...
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </div>

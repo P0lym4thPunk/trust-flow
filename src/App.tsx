@@ -134,6 +134,12 @@ function TrustFlowMain() {
         <ConversationalWorkspace
           initialType={workspaceInitialType}
           currentUserAddress={effectiveAccount.address}
+          agreements={agreements}
+          onSelectAgreement={(agr) => setSelectedAgreement(agr)}
+          onNavigateTab={(tab) => {
+            setSelectedAgreement(null);
+            setActiveTab(tab);
+          }}
           onAgreementCreated={(newAgr) => {
             setAgreements((prev) => [newAgr, ...prev]);
             setSelectedAgreement(newAgr);
@@ -143,6 +149,10 @@ function TrustFlowMain() {
         <AgreementListView
           agreements={agreements}
           activeFilter={activeTab}
+          onFilterChange={(tab) => {
+            setSelectedAgreement(null);
+            setActiveTab(tab);
+          }}
           onSelectAgreement={(agr) => setSelectedAgreement(agr)}
           onCreateNew={() => {
             setSelectedAgreement(null);

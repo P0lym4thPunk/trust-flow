@@ -37,15 +37,47 @@ body {
 
 /* Custom highlight stroke effect inspired by Stellar brand references */
 .stellar-highlight {
-  background: linear-gradient(120deg, rgba(245, 208, 58, 0.28) 0%, rgba(245, 208, 58, 0.85) 100%);
+  background: linear-gradient(120deg, rgba(245, 208, 58, 0.35) 0%, rgba(245, 208, 58, 0.90) 100%);
   background-repeat: no-repeat;
-  background-size: 100% 38%;
+  background-size: 100% 42%;
   background-position: 0 88%;
 }
 
 .dark .stellar-highlight {
-  background: linear-gradient(120deg, rgba(245, 208, 58, 0.20) 0%, rgba(245, 208, 58, 0.75) 100%);
+  background: linear-gradient(120deg, rgba(245, 208, 58, 0.25) 0%, rgba(245, 208, 58, 0.85) 100%);
   background-repeat: no-repeat;
-  background-size: 100% 38%;
+  background-size: 100% 42%;
   background-position: 0 88%;
 }
+
+/* Bold brush highlighter behind large numbers/metrics from the reference images */
+.stat-highlight {
+  position: relative;
+  display: inline-block;
+  z-index: 1;
+}
+.stat-highlight::before {
+  content: "";
+  position: absolute;
+  inset: 12% -6% 12% -6%;
+  background: #F5D03A;
+  z-index: -1;
+  opacity: 0.85;
+  border-radius: 4px;
+  transform: rotate(-1deg);
+}
+
+.dark .stat-highlight::before {
+  opacity: 0.9;
+}
+
+/* Reference image dashed border frame */
+.stellar-dashed-border {
+  border: 2px dashed #F5D03A;
+}
+
+/* Display font class */
+.font-display {
+  font-family: var(--font-display);
+}
+

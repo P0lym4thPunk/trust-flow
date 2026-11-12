@@ -1,5 +1,3 @@
-import { AgreementTerms } from "../types/agreement";
-
 /**
  * Deterministically sorts object keys lexicographically (RFC 8785 JSON Canonicalization Scheme)
  */
@@ -14,38 +12,34 @@ export function canonicalizeJson(obj: unknown): string {
 
   const record = obj as Record<string, unknown>;
   const sortedKeys = Object.keys(record).sort();
-  const pairs = sortedKeys.map((key) => {
-    return `${JSON.stringify(key)}:${canonicalizeJson(record[key])}`;
-  });
+  const pairs: string[] = [];
+  for (const key of sortedKeys) {
+    const value = record[key];
+    if (value !== undefined) {
+      pairs.push(`${JSON.stringify(key)}:${canonicalizeJson(value)}`);
+    }
+  }
 
   return "{" + pairs.join(",") + "}";
 }
 
 /**
- * Computes canonical SHA-256 digest of agreement terms in hex format (64 chars)
+ * Computes canonical SHA-256 digest in hex format (64 chars)
  */
-export async function computeAgreementHash(terms: AgreementTerms): Promise<string> {
-  const canonicalJson = canonicalizeJson({
-    amount: terms.amount,
-    approver: terms.approver,
-    asset: terms.asset,
-    cancellationTerms: terms.cancellationTerms,
-    condition: terms.condition,
-    contractId: terms.contractId,
-    deadline: terms.deadline,
-    deliverables: terms.deliverables,
-    domain: terms.domain,
-    network: terms.network,
-    payer: terms.payer,
-    recipient: terms.recipient,
-    title: terms.title,
-    version: terms.version,
-  });
-
-  // Use standard Web Crypto API (supported in Node.js 18+ and modern browsers)
+export async function computeCanonicalHash(data: unknown): Promise<string> {
+  const canonicalJson = canonicalizeJson(data);
   const encoder = new TextEncoder();
-  const data = encoder.encode(canonicalJson);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const bytes = encoder.encode(canonicalJson);
+
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error("Web Crypto subtle API is not available.");
+  }
+
+  const hashBuffer = await subtle.digest("SHA-256", bytes);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+export const computeAgreementHash = computeCanonicalHash;
+

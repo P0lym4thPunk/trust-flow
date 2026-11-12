@@ -1,8 +1,20 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, beforeEach } from "node:test";
+import assert from "node:assert/strict";
 import { computeCanonicalHash, canonicalizeJson } from "../src/lib/hash";
 import { agreementService } from "../backend/src/services/agreement.service";
-import { handleAcceptAgreement, handleCreateOrUpdateAgreement } from "../backend/src/controllers/agreement.controller";
+import { handleAcceptAgreement } from "../backend/src/controllers/agreement.controller";
 import { AgreementRecord } from "../src/types/agreement";
+
+const expect = (actual: any) => ({
+  toBe: (expected: any) => assert.strictEqual(actual, expected),
+  not: {
+    toBe: (expected: any) => assert.notStrictEqual(actual, expected),
+    toBeNull: () => assert.notStrictEqual(actual, null),
+  },
+  toHaveLength: (len: number) => assert.strictEqual(actual?.length, len),
+  toContain: (substr: string) => assert.ok(String(actual).includes(substr)),
+});
+
 
 describe("TrustFlow Canonical Hash & Counter-Party Acceptance Suite", () => {
   const sampleTerms1 = {
