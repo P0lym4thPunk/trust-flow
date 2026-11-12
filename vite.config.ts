@@ -8,7 +8,10 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
+        '@solana-program/system': path.resolve(import.meta.dirname, 'src/lib/shims/solana-system-shim.ts'),
+        '@base-org/account': path.resolve(import.meta.dirname, 'src/lib/shims/base-account-shim.ts'),
+        '@walletconnect/jsonrpc-http-connection': path.resolve(import.meta.dirname, 'src/lib/shims/walletconnect-http-shim.ts'),
       },
     },
     server: {

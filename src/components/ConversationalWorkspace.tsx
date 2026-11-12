@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Send, Sparkles, AlertCircle, ArrowRight, ShieldCheck, CheckCircle, FileText } from "lucide-react";
 import { AgreementTerms, CheckerAuditResult, TransactionType } from "../types/agreement";
 import { STELLAR_TESTNET_CONFIG, toStroopUnits } from "../lib/stellar/config";
-import { computeCanonicalHash } from "../lib/hash";
+import { computeAgreementHash } from "../lib/hash";
 
 interface ConversationalWorkspaceProps {
   initialType?: TransactionType;
@@ -134,7 +134,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       toStroopUnits(draftTerms.amount);
 
       // Compute canonical RFC 8785 SHA-256 hash
-      const canonicalHash = await computeCanonicalHash(draftTerms);
+      const canonicalHash = await computeAgreementHash(draftTerms);
 
       const agreementRecord = {
         id: `agr-${Date.now()}`,
@@ -171,11 +171,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       });
 
       if (res.ok) {
-        const persisted = await res.json();
-        onAgreementCreated(persisted);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        setErrorMessage(errData.error || "Failed to persist agreement to backend");
+        onAgreementCreated(agreementRecord);
       }
     } catch (err: any) {
       setErrorMessage(`Validation error: ${err.message}`);

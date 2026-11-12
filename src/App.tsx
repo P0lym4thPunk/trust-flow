@@ -4,26 +4,34 @@ import { NavigationShell } from "./components/NavigationShell";
 import { ConversationalWorkspace } from "./components/ConversationalWorkspace";
 import { AgreementDetailRoom } from "./components/AgreementDetailRoom";
 import { AgreementListView } from "./components/AgreementListView";
+import { AuthModal } from "./components/AuthModal";
+import { AuthProvider, useAuth } from "./lib/auth/AuthContext";
 import { AgreementRecord, TransactionType } from "./types/agreement";
 import {
   WalletAccount,
-  SIMULATED_PROFILES,
   connectFreighterWallet,
 } from "./lib/stellar/wallet";
+import {
+  pollarPrivyAdapter,
+  IS_PRIVY_CONFIGURED,
+  PrivyAdapterProvider,
+} from "./lib/auth/pollarPrivy";
 
-export default function App() {
+function TrustFlowMain() {
   const [inApp, setInApp] = useState(false);
   const [activeTab, setActiveTab] = useState("workspace");
   const [isDark, setIsDark] = useState(true);
-  const [currentAccount, setCurrentAccount] = useState<WalletAccount>(
-    SIMULATED_PROFILES[0]
-  );
-  const [isSimulated, setIsSimulated] = useState(true);
   const [agreements, setAgreements] = useState<AgreementRecord[]>([]);
   const [selectedAgreement, setSelectedAgreement] =
     useState<AgreementRecord | null>(null);
   const [workspaceInitialType, setWorkspaceInitialType] =
     useState<TransactionType>("WORK");
+
+  const {
+    effectiveAccount,
+    setIsDemoSandbox,
+    setSelectedDemoPersona,
+  } = useAuth();
 
   // Sync dark theme class on documentElement
   useEffect(() => {
@@ -51,13 +59,13 @@ export default function App() {
     fetchAgreements();
   }, []);
 
-  // Connect authentic Freighter wallet
+  // Connect authentic Freighter wallet (fallback)
   const handleConnectRealWallet = async () => {
     try {
       const realAccount = await connectFreighterWallet();
       if (realAccount) {
-        setCurrentAccount(realAccount);
-        setIsSimulated(false);
+        setSelectedDemoPersona(realAccount);
+        setIsDemoSandbox(false);
       }
     } catch (err: any) {
       alert(err.message || "Failed to connect Freighter wallet.");
@@ -66,8 +74,8 @@ export default function App() {
 
   // Switch persona (e.g. Alice Payer, Bob Contractor, Charlie Approver)
   const handleAccountChange = (account: WalletAccount) => {
-    setCurrentAccount(account);
-    setIsSimulated(account.isSimulated);
+    setSelectedDemoPersona(account);
+    setIsDemoSandbox(true);
   };
 
   // Update agreement record in state and server
@@ -108,9 +116,9 @@ export default function App() {
         setSelectedAgreement(null);
         setActiveTab(tab);
       }}
-      currentAccount={currentAccount}
+      currentAccount={effectiveAccount}
       onAccountChange={handleAccountChange}
-      isSimulated={isSimulated}
+      isSimulated={effectiveAccount.isSimulated}
       onConnectRealWallet={handleConnectRealWallet}
       isDark={isDark}
       onToggleTheme={() => setIsDark(!isDark)}
@@ -118,14 +126,14 @@ export default function App() {
       {selectedAgreement ? (
         <AgreementDetailRoom
           agreement={selectedAgreement}
-          currentAccount={currentAccount}
+          currentAccount={effectiveAccount}
           onUpdateAgreement={handleUpdateAgreement}
           onBack={() => setSelectedAgreement(null)}
         />
       ) : activeTab === "workspace" ? (
         <ConversationalWorkspace
           initialType={workspaceInitialType}
-          currentUserAddress={currentAccount.address}
+          currentUserAddress={effectiveAccount.address}
           onAgreementCreated={(newAgr) => {
             setAgreements((prev) => [newAgr, ...prev]);
             setSelectedAgreement(newAgr);
@@ -144,4 +152,23 @@ export default function App() {
       )}
     </NavigationShell>
   );
+}
+
+export default function App() {
+  const content = (
+    <AuthProvider>
+      <TrustFlowMain />
+      <AuthModal />
+    </AuthProvider>
+  );
+
+  if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter) {
+    return (
+      <PrivyAdapterProvider adapter={pollarPrivyAdapter}>
+        {content}
+      </PrivyAdapterProvider>
+    );
+  }
+
+  return content;
 }

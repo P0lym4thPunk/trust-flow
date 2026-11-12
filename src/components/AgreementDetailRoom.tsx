@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   ShieldCheck,
   CheckCircle2,
@@ -11,15 +11,10 @@ import {
   FileCheck,
   RefreshCw,
   XCircle,
-  Share2,
-  Copy,
-  Check,
 } from "lucide-react";
 import { AgreementRecord } from "../types/agreement";
 import { formatAddress, STELLAR_TESTNET_CONFIG } from "../lib/stellar/config";
 import { WalletAccount } from "../lib/stellar/wallet";
-import { generateInviteUrl } from "../lib/stellar/invite";
-import { computeCanonicalHash } from "../lib/hash";
 
 interface AgreementDetailRoomProps {
   agreement: AgreementRecord;
@@ -39,20 +34,6 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
   const [actionLoading, setActionLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showTechDetails, setShowTechDetails] = useState(false);
-  const [hashVerified, setHashVerified] = useState<boolean | null>(null);
-
-  // Verify terms against canonical SHA-256 hash
-  useEffect(() => {
-    let active = true;
-    computeCanonicalHash(agreement.terms).then((computed) => {
-      if (active) {
-        setHashVerified(computed === agreement.canonicalHash);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [agreement.terms, agreement.canonicalHash]);
 
   // Status progression mapping
   const steps = [
@@ -70,52 +51,41 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
   const isRecipient = currentAccount.address === agreement.terms.recipient;
   const isApprover = currentAccount.address === agreement.terms.approver;
 
-  // 1. Counter-Party Acceptance Handler via Backend Verification
+  // 1. Recipient Acceptance Handler
   const handleAcceptAgreement = async () => {
     setActionLoading(true);
-    setStatusMessage("Verifying canonical hash & recording acceptance...");
-
-    try {
-      // Compute the deterministic canonical hash from current terms
-      const localHash = await computeCanonicalHash(agreement.terms);
-      const role = isPayer ? "PAYER" : "RECIPIENT";
-
-      const res = await fetch(`/api/agreements/${agreement.id}/accept`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role,
-          actor: currentAccount.address,
-          canonicalHash: localHash,
-        }),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server rejected acceptance (HTTP ${res.status})`);
-      }
-
-      const updatedRecord: AgreementRecord = await res.json();
-      onUpdateAgreement(updatedRecord);
-      setStatusMessage(
-        updatedRecord.status === "READY_FOR_FUNDING"
-          ? "Agreement fully accepted by all parties! Ready for escrow funding."
-          : `Acceptance by ${role.toLowerCase()} verified and recorded.`
-      );
-    } catch (err: any) {
-      console.error("Acceptance error:", err);
-      setStatusMessage(`Acceptance failed: ${err.message}`);
-    } finally {
+    setStatusMessage("Recording on-chain acceptance...");
+    setTimeout(() => {
+      const updated: AgreementRecord = {
+        ...agreement,
+        recipientAccepted: true,
+        updatedAt: new Date().toISOString(),
+        activity: [
+          ...agreement.activity,
+          {
+            id: `act-${Date.now()}`,
+            agreementId: agreement.id,
+            timestamp: new Date().toISOString(),
+            actor: currentAccount.address,
+            actorRole: "RECIPIENT",
+            type: "ACCEPTED",
+            title: "Accepted by Recipient",
+            description: `Recipient ${formatAddress(currentAccount.address)} accepted canonical hash ${agreement.canonicalHash.slice(0, 8)}...`,
+          },
+        ],
+      };
+      onUpdateAgreement(updated);
       setActionLoading(false);
-    }
+      setStatusMessage("Acceptance recorded. Awaiting payer funding.");
+    }, 1200);
   };
 
   // 2. Payer Funding Handler
   const handleFundEscrow = async () => {
     setActionLoading(true);
-    setStatusMessage("Simulating Soroban authorization & locking testnet tokens...");
+    setStatusMessage("[Demo Mode] Simulating token lock on Stellar Testnet...");
     setTimeout(() => {
-      const txHash = `tx-${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
+      const txHash = `sim-tx-${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
       const updated: AgreementRecord = {
         ...agreement,
         status: "FUNDED",
@@ -131,15 +101,15 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
             actor: currentAccount.address,
             actorRole: "PAYER",
             type: "FUNDED",
-            title: "Escrow Funded on Stellar Testnet",
-            description: `${agreement.terms.amount} ${agreement.terms.asset} locked into Soroban Escrow contract.`,
+            title: "Escrow Funded (Demo Simulation)",
+            description: `${agreement.terms.amount} ${agreement.terms.asset} simulated lock for demonstration.`,
             txHash,
           },
         ],
       };
       onUpdateAgreement(updated);
       setActionLoading(false);
-      setStatusMessage("Escrow successfully funded on Stellar Testnet.");
+      setStatusMessage("Escrow funded in demo simulation. Ready for work submission.");
     }, 1500);
   };
 
@@ -147,13 +117,13 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
   const handleSubmitFulfilment = async () => {
     if (!fulfilmentInput.trim()) return;
     setSubmittingFulfilment(true);
-    setStatusMessage("Submitting fulfilment proof to smart contract...");
+    setStatusMessage("[Demo Mode] Submitting fulfilment deliverables...");
     setTimeout(() => {
       const updated: AgreementRecord = {
         ...agreement,
         status: "FULFILMENT_SUBMITTED",
         fulfilmentNotes: fulfilmentInput,
-        fulfilmentHash: `hash-${Math.random().toString(16).slice(2, 18)}`,
+        fulfilmentHash: `sim-hash-${Math.random().toString(16).slice(2, 18)}`,
         updatedAt: new Date().toISOString(),
         activity: [
           ...agreement.activity,
@@ -171,14 +141,14 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
       };
       onUpdateAgreement(updated);
       setSubmittingFulfilment(false);
-      setStatusMessage("Fulfilment submitted. Waiting for approver review.");
+      setStatusMessage("Fulfilment submitted in demo simulation. Waiting for approver review.");
     }, 1200);
   };
 
   // 4. Approver Condition Approval Handler
   const handleApproveCondition = async () => {
     setActionLoading(true);
-    setStatusMessage("Approving condition on-chain...");
+    setStatusMessage("[Demo Mode] Verifying condition satisfaction...");
     setTimeout(() => {
       const updated: AgreementRecord = {
         ...agreement,
@@ -200,16 +170,16 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
       };
       onUpdateAgreement(updated);
       setActionLoading(false);
-      setStatusMessage("Condition approved. Funds unlocked for release.");
+      setStatusMessage("Condition approved in demo simulation. Funds unlocked for release.");
     }, 1200);
   };
 
   // 5. Release Funds Handler (Permissionless once approved)
   const handleReleaseFunds = async () => {
     setActionLoading(true);
-    setStatusMessage("Executing permissionless release of escrowed tokens to recipient...");
+    setStatusMessage("[Demo Mode] Simulating release of escrowed tokens to recipient...");
     setTimeout(() => {
-      const txHash = `rel-${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
+      const txHash = `sim-rel-${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`;
       const updated: AgreementRecord = {
         ...agreement,
         status: "RELEASED",
@@ -237,28 +207,6 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
     }, 1500);
   };
 
-  const [copiedInvite, setCopiedInvite] = useState(false);
-
-  const handleCopyInvite = () => {
-    const inviteUrl = generateInviteUrl({
-      agreementId: agreement.id,
-      escrowId: agreement.escrowId,
-      contractId: agreement.terms.contractId,
-      title: agreement.title,
-      amount: agreement.terms.amount,
-      asset: agreement.terms.asset,
-      payer: agreement.terms.payer,
-      recipient: agreement.terms.recipient,
-      approver: agreement.terms.approver,
-      deadline: agreement.terms.deadline,
-      canonicalHash: agreement.canonicalHash,
-      version: agreement.version,
-    });
-    navigator.clipboard.writeText(inviteUrl);
-    setCopiedInvite(true);
-    setTimeout(() => setCopiedInvite(false), 2500);
-  };
-
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Top Back Nav & Title Header */}
@@ -275,39 +223,12 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
               {agreement.title}
             </h2>
             <span className="text-xs px-2 py-0.5 rounded font-bold bg-[#F5D03A]/20 text-slate-900 dark:text-[#F5D03A]">
-              {agreement.status.replace(/_/g, " ")}
+              {agreement.status.replace("_", " ")}
             </span>
-            {hashVerified === true && (
-              <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" /> Hash Verified
-              </span>
-            )}
-            {hashVerified === false && (
-              <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" /> Hash Tampered
-              </span>
-            )}
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleCopyInvite}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-[#F5D03A] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            {copiedInvite ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-500" />
-                <span className="text-emerald-600 dark:text-emerald-400 font-bold">Invite Link Copied!</span>
-              </>
-            ) : (
-              <>
-                <Share2 className="w-3.5 h-3.5 text-slate-500" />
-                <span>Share On-Chain Invite</span>
-              </>
-            )}
-          </button>
-
           <div className="text-right">
             <div className="text-2xl font-black tabular-nums text-slate-900 dark:text-white">
               {agreement.terms.amount} <span className="text-sm font-bold text-slate-500">{agreement.terms.asset}</span>

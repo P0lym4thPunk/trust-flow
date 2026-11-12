@@ -9,6 +9,7 @@ export const AuthModal: React.FC = () => {
     sendOtpCode,
     verifyOtpCode,
     loginWithGoogle,
+    isPrivyConfigured,
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"email" | "google">("email");
@@ -121,6 +122,22 @@ export const AuthModal: React.FC = () => {
                 Non-custodial Stellar Testnet keypair provisioned automatically.
               </p>
             </div>
+          </div>
+
+          {/* Engine Status Badge */}
+          <div className="mb-3 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] flex items-center justify-between">
+            <span className="text-slate-500 font-medium">Auth & Wallet Engine:</span>
+            {isPrivyConfigured ? (
+              <span className="inline-flex items-center gap-1.5 font-bold text-emerald-600 dark:text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Pollar / Privy Live
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400" title="Set VITE_PRIVY_APP_ID in .env from dashboard.privy.io for live Privy enclaves">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                Testnet Sandbox Mode
+              </span>
+            )}
           </div>
 
           {/* Provisioning Loader View */}

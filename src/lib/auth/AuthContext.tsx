@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { Account, TransactionBuilder, Operation } from "@stellar/stellar-sdk";
 import { WalletAccount, SIMULATED_PROFILES } from "../stellar/wallet";
+import { STELLAR_TESTNET_CONFIG } from "../stellar/config";
+import { pollarPrivyAdapter, IS_PRIVY_CONFIGURED } from "./pollarPrivy";
 
 export interface AuthenticatedUser {
   id: string;
@@ -25,6 +28,7 @@ interface AuthContextType {
   wallet: AuthenticatedWallet | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isPrivyConfigured: boolean;
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
@@ -32,6 +36,7 @@ interface AuthContextType {
   verifyOtpCode: (email: string, code: string) => Promise<void>;
   loginWithGoogle: (mockProfile?: { email: string; name?: string }) => Promise<void>;
   syncPrivyUser: (data: { privyUserId: string; email?: string; stellarAddress?: string; displayName?: string }) => Promise<void>;
+  signTestTransaction: () => Promise<{ signedTxXdr: string; txHash: string; status: string }>;
   logout: () => Promise<void>;
   refreshBalance: () => Promise<void>;
   // Demo Mode controls (isolated from real identity)
@@ -109,6 +114,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const sendOtpCode = async (email: string) => {
+    if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter) {
+      await pollarPrivyAdapter.sendEmailCode(email);
+      return { success: true, message: `Verification code sent via Privy to ${email}` };
+    }
     const res = await fetch("/api/auth/otp/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -122,6 +131,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const verifyOtpCode = async (email: string, code: string) => {
+    if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter) {
+      await pollarPrivyAdapter.verifyEmailCode(code);
+      const conn = await pollarPrivyAdapter.connect();
+      const stellarAddress = conn.address;
+      await syncPrivyUser({
+        privyUserId: `privy-${stellarAddress.slice(0, 10)}`,
+        email,
+        stellarAddress,
+        displayName: email.split("@")[0],
+      });
+      return;
+    }
+
     const res = await fetch("/api/auth/otp/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -140,6 +162,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const loginWithGoogle = async (mockProfile?: { email: string; name?: string }) => {
+    if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter) {
+      await pollarPrivyAdapter.loginWithOAuth("google");
+      const conn = await pollarPrivyAdapter.connect();
+      const stellarAddress = conn.address;
+      await syncPrivyUser({
+        privyUserId: `privy-${stellarAddress.slice(0, 10)}`,
+        email: mockProfile?.email || "privy.user@gmail.com",
+        stellarAddress,
+        displayName: mockProfile?.name || "Stellar User",
+      });
+      return;
+    }
+
     const payload = mockProfile || {
       email: "demo.stellar.user@gmail.com",
       displayName: "Alex Rivera",
@@ -161,6 +196,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setWallet(data.wallet);
     setIsDemoSandbox(false);
     setIsAuthModalOpen(false);
+  };
+
+  const signTestTransaction = async () => {
+    const targetAddress = effectiveAccount.address;
+    let sequence = "1";
+    try {
+      const res = await fetch(`https://horizon-testnet.stellar.org/accounts/${targetAddress}`);
+      if (res.ok) {
+        const data = await res.json();
+        sequence = data.sequence || "1";
+      }
+    } catch {
+      // fallback sequence
+    }
+
+    const account = new Account(targetAddress, sequence);
+    const tx = new TransactionBuilder(account, {
+      fee: "100",
+      networkPassphrase: STELLAR_TESTNET_CONFIG.networkPassphrase,
+    })
+      .addOperation(
+        Operation.manageData({
+          name: "trustflow_auth_test",
+          value: Buffer.from("authorized"),
+        })
+      )
+      .setTimeout(60)
+      .build();
+
+    const txHashHex = Buffer.from(tx.hash()).toString("hex");
+
+    if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter && typeof pollarPrivyAdapter.signTransaction === "function") {
+      const result = await pollarPrivyAdapter.signTransaction(tx.toXDR(), {
+        networkPassphrase: STELLAR_TESTNET_CONFIG.networkPassphrase,
+      });
+      return {
+        signedTxXdr: result.signedTxXdr,
+        txHash: txHashHex,
+        status: "CONFIRMED_USER_AUTHORIZED",
+      };
+    }
+
+    return {
+      signedTxXdr: tx.toXDR(),
+      txHash: txHashHex,
+      status: "SIMULATED_TESTNET_AUTHORIZED",
+    };
   };
 
   const syncPrivyUser = async (data: {
@@ -187,6 +269,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter) {
+      try {
+        await pollarPrivyAdapter.disconnect();
+      } catch (err) {
+        console.warn("Privy disconnect notice:", err);
+      }
+    }
     const storedToken = localStorage.getItem(TOKEN_KEY);
     if (storedToken) {
       try {
@@ -230,11 +319,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated: !!user,
         isAuthModalOpen,
         openAuthModal: () => setIsAuthModalOpen(true),
+        isPrivyConfigured: IS_PRIVY_CONFIGURED,
         closeAuthModal: () => setIsAuthModalOpen(false),
         sendOtpCode,
         verifyOtpCode,
         loginWithGoogle,
         syncPrivyUser,
+        signTestTransaction,
         logout,
         refreshBalance,
         isDemoSandbox,

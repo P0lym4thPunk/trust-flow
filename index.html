@@ -3,6 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Runtime iframe & accessor protection for third-party SDK dependencies
+      try {
+        var _nativeFetch = window.fetch;
+        var _fetchRef = _nativeFetch;
+        Object.defineProperty(window, 'fetch', {
+          get: function() { return _fetchRef; },
+          set: function(fn) { if (fn) _fetchRef = fn; },
+          configurable: true,
+          enumerable: true
+        });
+        if (typeof Window !== 'undefined' && Window.prototype) {
+          Object.defineProperty(Window.prototype, 'fetch', {
+            get: function() { return _fetchRef; },
+            set: function(fn) { if (fn) _fetchRef = fn; },
+            configurable: true,
+            enumerable: true
+          });
+        }
+      } catch (e) {}
+    </script>
     <title>TrustFlow — Universal Escrow & Conditional Payments on Stellar</title>
     <meta name="description" content="AI-assisted universal escrow and conditional payments application on Stellar using Soroban smart contracts." />
     <meta property="og:title" content="TrustFlow — Universal Escrow on Stellar" />
@@ -12,28 +33,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <script>
-      (function() {
-        try {
-          var _fetch = window.fetch;
-          var proto = Window.prototype;
-          // Provide both getter and setter on Window.prototype and window
-          // so extensions assigning window.fetch = ... can succeed without throwing
-          Object.defineProperty(proto, 'fetch', {
-            get: function() { return _fetch; },
-            set: function(val) { _fetch = val; },
-            configurable: true,
-            enumerable: true
-          });
-          Object.defineProperty(window, 'fetch', {
-            get: function() { return _fetch; },
-            set: function(val) { _fetch = val; },
-            configurable: true,
-            enumerable: true
-          });
-        } catch (e) {}
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>

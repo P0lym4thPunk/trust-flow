@@ -1,6 +1,8 @@
 import { validateStellarAddress } from "./config";
 
 export interface WalletAccount {
+  id?: string;
+  email?: string;
   address: string;
   displayName: string;
   role: "PAYER" | "RECIPIENT" | "APPROVER";
@@ -8,6 +10,8 @@ export interface WalletAccount {
   balanceXLM: string;
   balanceUSDC: string;
   isSimulated: boolean;
+  isEmbedded?: boolean;
+  provider?: "google" | "email_otp" | "privy" | "freighter" | "simulated";
 }
 
 // 3 Standard Simulated Personas for End-to-End Testing
