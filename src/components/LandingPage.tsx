@@ -1,11 +1,14 @@
 import React from "react";
-import { ShieldCheck, ArrowRight, Zap, CheckCircle2, Lock, Sparkles, Scale } from "lucide-react";
+import { ShieldCheck, ArrowRight, Zap, CheckCircle2, Lock, Sparkles, Scale, User, Wallet } from "lucide-react";
+import { useAuth } from "../lib/auth/AuthContext";
 
 interface LandingProps {
   onLaunch: (selectedType?: "WORK" | "PROTECTED_PAYMENT" | "CONDITIONAL_DISBURSEMENT") => void;
 }
 
 export const LandingPage: React.FC<LandingProps> = ({ onLaunch }) => {
+  const { user, wallet, isAuthenticated, openAuthModal } = useAuth();
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0B0E14] text-slate-900 dark:text-slate-100 transition-colors">
       {/* Top Header */}
@@ -20,22 +23,46 @@ export const LandingPage: React.FC<LandingProps> = ({ onLaunch }) => {
                 TrustFlow
               </span>
               <span className="text-[10px] text-slate-500 font-medium tracking-wide">
-                STELLAR SOROBAN ESCROW
+                STELLAR ESCROW & EMBEDDED WALLETS
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4">
             <span className="hidden sm:inline-flex text-xs font-semibold px-2.5 py-1 rounded bg-[#F5D03A]/20 text-[#8F6E00] dark:text-[#F5D03A] border border-[#F5D03A]/30">
-              Stellar Testnet Prototype
+              Stellar Testnet
             </span>
-            <button
-              onClick={() => onLaunch()}
-              className="px-4 py-2 text-sm font-semibold text-slate-900 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-            >
-              Launch App
-              <ArrowRight className="w-4 h-4" />
-            </button>
+
+            {isAuthenticated ? (
+              <div className="flex items-center gap-2">
+                <span className="hidden md:inline-flex text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  {user?.avatar} {user?.displayName}
+                </span>
+                <button
+                  onClick={() => onLaunch()}
+                  className="px-4 py-2 text-sm font-semibold text-slate-900 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                >
+                  Enter Workspace
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openAuthModal}
+                  className="px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white border border-slate-300 dark:border-slate-700 rounded-lg hover:border-[#F5D03A] transition-colors cursor-pointer"
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={() => onLaunch()}
+                  className="px-4 py-2 text-sm font-semibold text-slate-900 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                >
+                  Launch App
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>

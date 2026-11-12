@@ -7,7 +7,8 @@ export const STELLAR_TESTNET_CONFIG = {
   horizonUrl: "https://horizon-testnet.stellar.org",
   friendbotUrl: "https://friendbot.stellar.org",
   domainSeparator: "trustflow.stellar.escrow.v1",
-  contractId: "CDESCROWTRUSTFLOW111111111111111111111111111111111111111", // Configurable default contract ID
+  // Escrow execution engine contract ID placeholder — retired custom contract; Trustless Work provides authoritative on-chain contract ID in Phase 3
+  contractId: "PENDING_TRUSTLESS_WORK_INTEGRATION",
   assets: {
     XLM: {
       code: "XLM",

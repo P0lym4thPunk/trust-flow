@@ -1,0 +1,841 @@
+# TRUSTFLOW — MASTER PROJECT BRIEF, ARCHITECTURE AND IMPLEMENTATION-READINESS AUDIT
+
+You are working on TrustFlow, an ambitious hackathon project for Boundless Build Day on Stellar.
+
+This document is the consolidated source of truth for the project. It incorporates the product direction, architecture decisions, technical requirements, previous implementation work, integrations and subsequent revisions.
+
+**Do not treat this as a request to redesign the product or start a new application.** Inspect the existing implementation, preserve working components and prepare the project for implementation using the decisions in this document.
+
+We want to build an ambitious, technically impressive application. We are comfortable integrating several specialised SDKs and services rather than rebuilding existing infrastructure.
+
+However, do not confuse overengineering the product with unnecessarily building infrastructure that existing services already provide.
+
+---
+
+# PART 1 — PRODUCT VISION
+
+## 1. What is TrustFlow?
+
+TrustFlow is a universal escrow and conditional-payments application built on Stellar.
+
+Its central promise is:
+
+**Money moves when the agreed condition is satisfied.**
+
+The application should make secure conditional payments accessible to ordinary users, freelancers, businesses, organisations and teams without requiring them to understand blockchain technology.
+
+TrustFlow should feel like a complete financial product, not a generic hackathon dashboard or a blockchain developer tool.
+
+## 2. Transaction templates
+
+The product has three principal transaction templates:
+
+### A. Work-based escrow
+For freelancers, clients and service providers.
+
+Example:
+A client hires someone to design a website. The agreement is established, funds are secured, the freelancer submits the completed work, the client approves it and the funds are released.
+
+### B. Protected everyday payments
+For purchases, deposits, bookings and other transactions where payment should depend on an agreed condition.
+
+### C. Conditional disbursements
+For NGOs, teams, grants and other situations where money should only be released after agreed conditions are met.
+
+These are product templates, not three separate escrow engines.
+
+**Work-based escrow is the first complete implementation and the primary demonstration journey.**
+
+Do not represent the other templates as fully functional if their corresponding transaction rules have not been implemented.
+
+## 3. Explicit MVP exclusions
+
+Do not introduce:
+
+- A marketplace.
+- Lending or borrowing.
+- Fiat on/offramps.
+- Complex arbitration.
+- Multi-approver workflows.
+- Time-oracle functionality.
+- Invitation-sharing functionality.
+- A competing custom escrow contract.
+
+The supplied Boundless transaction hash was reference material for understanding on-chain transaction patterns. It was not a request to build invitations. Do not implement invitation functionality.
+
+---
+
+# PART 2 — EXISTING APPLICATION AND DESIGN DIRECTION
+
+## 4. Preserve the existing application
+
+The application has already been prototyped in Google AI Studio Build Mode.
+
+The reported existing implementation includes:
+
+- React 19.
+- Vite 8.
+- TypeScript.
+- Tailwind CSS v4.
+- Express server.
+- Server-side Gemini integration using `@google/genai`.
+- Stellar SDK configuration.
+- Stellar wallet integration.
+- Landing page.
+- Conversational workspace.
+- Agreement preview.
+- Agreement checker.
+- Agreement detail room.
+- Agreement list and activity views.
+- Local prototype persistence.
+- Demo personas for Alice, Bob and Charlie.
+- An initial Soroban contract implementation.
+- Stellar CLI installation reported by the previous agent.
+
+The previous implementation report claimed that 17 files were edited and that TypeScript compilation and lint checks passed.
+
+These are reported results, not independently verified evidence of a working deployed escrow application.
+
+Inspect the actual repository and determine what exists, what works and what is incomplete.
+
+Do not assume a reported feature is functional simply because a component or file exists.
+
+## 5. Existing application experience
+
+The approved product experience includes:
+
+### Landing page
+- Clear explanation of TrustFlow.
+- Strong central product promise.
+- Explanation of the three transaction templates.
+- Simple explanation of how escrow works.
+- Launch application action.
+
+### Main application
+A conversational workspace inspired by familiar AI chat interfaces.
+
+It should include:
+
+- Top-left navigation drawer.
+- Wallet and profile controls in the top-right.
+- Personalised greeting.
+- Transaction shortcuts.
+- Conversational agreement composer.
+- Agreement preview.
+- Active, pending and completed transaction tracking.
+- Transaction detail room.
+- Activity timeline.
+- Technical transaction details available without overwhelming ordinary users.
+
+### Transaction experience
+Users should be able to describe an agreement in natural language, have TrustFlow help structure it, review the resulting terms and proceed through the appropriate transaction flow.
+
+Do not force users to understand Soroban, XDR, contract IDs or blockchain infrastructure to use the product.
+
+## 6. Visual direction
+
+Preserve the existing design and the previously supplied visual references.
+
+The visual direction is:
+
+- Stellar Gold: `#F5D03A`, `#ECC427`.
+- Deep Space / Nebula Purple: `#4A2574`, `#2D144A`, `#361A53`.
+- Light backgrounds: `#FFFFFF`, `#F8FAFC`, `#F1F5F9`.
+- Dark backgrounds: `#0B0E14`, `#121824`, `#1B2232`.
+- Strong display typography with selective yellow highlighter treatments.
+- Plus Jakarta Sans, Outfit or a suitable system sans-serif.
+- Restrained use of pill shapes.
+- Polished, minimal, mobile-first layouts.
+
+Do not replace the established visual identity with generic blockchain styling.
+
+---
+
+# PART 3 — APPROVED TECHNICAL ARCHITECTURE
+
+## 7. Core architecture decision
+
+TrustFlow will use specialised infrastructure for different responsibilities.
+
+The intended architecture is:
+
+**Frontend**
+React + Vite + TypeScript + Tailwind CSS.
+
+**Application server**
+Express, preserving the existing implementation.
+
+**AI agreement assistant**
+Server-side Gemini integration.
+
+**Authentication and embedded Stellar wallet**
+Pollar SDK and its compatible authentication/wallet infrastructure.
+
+**Escrow execution**
+Trustless Work.
+
+**Stellar development knowledge**
+Stellar Raven MCP.
+
+**Stellar payment capabilities**
+Userouter SDK, subject to verification of the exact official project and its capabilities.
+
+**Contract security analysis**
+Soroban Security Detectors SDK (SSD), where applicable.
+
+**Blockchain**
+Stellar Testnet for the hackathon demonstration.
+
+**Application persistence**
+The existing prototype persistence can be retained temporarily where appropriate, with a suitable persistent account-data solution for the complete application.
+
+The above services must have clear responsibilities. Avoid duplicate authorities and overlapping transaction engines.
+
+## 8. Trustless Work is the sole escrow engine
+
+This is a firm decision.
+
+We are choosing Trustless Work instead of developing and maintaining our own escrow contract.
+
+Official project:
+https://trustlesswork.com/
+
+Documentation and repositories should be located through its official resources.
+
+Inspect the currently available APIs, SDKs, examples and contract implementations.
+
+Investigate V1 and V2, their current status and their compatibility with the hackathon requirements.
+
+V2 has previously been reported as a Testnet beta. Do not assume that its capabilities, security status or production readiness are equivalent to V1.
+
+Determine the most suitable version for our implementation.
+
+Evaluate:
+
+- Escrow creation and deployment.
+- Participant roles.
+- Payer and receiver.
+- Approver.
+- Funding.
+- Fulfilment submission.
+- Approval.
+- Fund release.
+- Refund and cancellation operations.
+- Supported assets.
+- Network compatibility.
+- Transaction-state retrieval.
+- Transaction signing.
+- API authentication.
+- Required credentials.
+- Webhooks or other supported transaction-update mechanisms.
+- React SDK and REST API integration options.
+
+Our existing React application already has its own interface. Prefer the SDK/API integration that allows TrustFlow to preserve its interface rather than unnecessarily replacing it with a separate UI.
+
+Trustless Work must be the authoritative escrow execution engine.
+
+Do not allow a custom TrustFlow contract, local database or frontend simulation to become a competing authority over escrow funds.
+
+If custom Soroban contract code already exists, inspect its dependencies and determine what should be retained as reference material and what should be removed from the active transaction flow.
+
+Do not delete useful work without identifying its purpose.
+
+## 9. Stellar SDK, RPC and wallet responsibilities
+
+Keep the responsibilities of the Stellar tools distinct.
+
+- Stellar JavaScript SDK: transaction construction, simulation, XDR handling, submission and other Stellar-side application operations where required.
+- Stellar Wallets Kit or compatible wallet adapters: wallet connection and signing where needed.
+- Pollar: preferred embedded wallet and onboarding infrastructure.
+- Stellar CLI: development, contract inspection and Stellar operations.
+- Soroban Rust SDK: contract development where applicable, not a requirement to build our own escrow engine.
+- Stellar RPC: network communication when the selected SDK or Trustless Work integration requires it.
+
+We do not want to build or operate our own RPC infrastructure.
+
+Use the network access required by the chosen integrations. If direct Stellar RPC calls are necessary, explain which operation needs them and use the appropriate existing Stellar Testnet endpoint.
+
+Do not install an RPC server or create unnecessary infrastructure.
+
+The Stellar CLI is a development tool, not something every end user should need to run.
+
+---
+
+# PART 4 — AUTHENTICATION AND EMBEDDED WALLET ONBOARDING
+
+## 10. Account-based dapp experience
+
+TrustFlow is an account-based dapp.
+
+We want users to register, sign in, return later and recover their personalised experience.
+
+The preferred signup options are:
+
+- Google authentication.
+- Email authentication.
+
+We would prefer email and password if the selected authentication infrastructure supports it.
+
+Do not assume that email OTP and email/password are the same authentication method. Verify the actual supported methods.
+
+The signup process should be simple, polished and familiar.
+
+We do not want users to manually install an external wallet before they can use TrustFlow.
+
+## 11. Pollar is the preferred wallet SDK
+
+Pollar is our preferred candidate for embedded Stellar wallet provisioning and related onboarding functionality.
+
+Official repository:
+https://github.com/pollar-xyz/pollar
+
+Documentation:
+https://github.com/pollar-xyz/pollar-docs
+
+Investigate the latest official documentation, compatible packages, examples and supported integration patterns.
+
+Inspect relevant packages, including:
+
+- `@pollar/core`
+- `@pollar/react`
+- `@pollar/privy-adapter`, where appropriate.
+- Any other relevant official adapters.
+
+We want to use Pollar for as much of the following as its actual capabilities support:
+
+- User authentication integration.
+- Embedded Stellar wallet creation.
+- Wallet association with an account.
+- Session persistence.
+- Account and wallet recovery.
+- Wallet balances.
+- Transaction history.
+- Transaction signing and submission.
+- Payment-related capabilities.
+- External wallet interoperability where useful.
+
+### Desired onboarding journey
+
+1. A user opens TrustFlow.
+2. They register using Google or a supported email method.
+3. TrustFlow provisions or associates an embedded Stellar wallet with their account.
+4. The user enters their personalised application workspace.
+5. Their wallet and account information are available across sessions.
+6. They can create agreements and interact with the application.
+7. When a transaction requires signing, they receive a clear transaction authorisation experience.
+
+Do not require a separate manual wallet connection if Pollar can create and associate the wallet during signup.
+
+### Wallet ownership and recovery
+
+Investigate:
+
+- Key management.
+- Custody model.
+- Wallet creation.
+- Wallet activation.
+- Sponsored activation, if available.
+- Account linking.
+- Duplicate-account handling.
+- Session expiry.
+- Recovery after sign-out.
+- Recovery across devices.
+- Transaction signing.
+- API and configuration requirements.
+- Trustless Work signing compatibility.
+
+Clearly identify whether the selected wallet flow is custodial, non-custodial or managed by a third-party infrastructure provider.
+
+Never expose private keys or seed phrases in frontend code.
+
+Do not claim that users independently control their keys if the selected architecture does not provide that control.
+
+If traditional email/password is unavailable through Pollar's native authentication, investigate the Privy adapter or another compatible approach. Recommend the least complicated solution without creating unnecessary authentication layers.
+
+Use the supplied Stellar Passport example as a reference for the kind of simple, integrated onboarding experience we want:
+
+https://demo.stellarpassport.xyz/claim?org=stellar-nigeria&event=boundless-build-day
+
+This is an experience reference, not an instruction to clone Stellar Passport or assume it uses the same implementation.
+
+---
+
+# PART 5 — USEROUTER PAYMENT INTEGRATION
+
+## 12. Userouter
+
+We intend to incorporate Userouter, which we understand to be a Stellar payment SDK.
+
+Do not dismiss it or substitute an unrelated package.
+
+Investigate its official documentation, repository, supported SDKs and actual functionality.
+
+We want to understand and use its relevant capabilities, especially:
+
+- Payment routing.
+- Transaction construction and execution.
+- Supported Stellar assets.
+- Network compatibility.
+- Payment validation.
+- Fee handling.
+- Sponsorship capabilities.
+- Transaction limits.
+- Security guardrails.
+- Other relevant payment infrastructure.
+
+Use its documented guardrails and capabilities where they improve TrustFlow.
+
+Determine how Userouter fits alongside:
+
+- Pollar's wallet and signing infrastructure.
+- Trustless Work's escrow execution.
+- Stellar SDK transaction functionality.
+
+Avoid duplicating payment or transaction functionality.
+
+Userouter must not become a second escrow engine or an alternative authority over funds.
+
+If the name or official source cannot be established confidently, report the exact uncertainty and request the official repository or documentation. Do not install an unrelated similarly named dependency.
+
+---
+
+# PART 6 — STELLAR RAVEN MCP
+
+## 13. Required development-agent integration
+
+We want Stellar Raven MCP connected to the AI coding environment.
+
+Investigate the latest official setup instructions and supported MCP endpoint.
+
+Official endpoint previously identified:
+`https://raven.stellar.org/mcp`
+
+Verify the endpoint and the currently supported connection procedure.
+
+Investigate its available tools and capabilities.
+
+Use Raven as a development knowledge source for:
+
+- Stellar documentation.
+- Soroban development.
+- Stellar SDK usage.
+- Wallet integration.
+- Stellar CLI.
+- Network configuration.
+- Transaction operations.
+- Relevant ecosystem integrations.
+
+The purpose is to improve the coding agent's access to current Stellar-specific knowledge while developing TrustFlow.
+
+Do not confuse Raven with an escrow SDK, wallet provider or runtime dependency.
+
+Do not claim that Raven has been connected until the actual MCP connection has been established and verified.
+
+---
+
+# PART 7 — SOROBAN SECURITY DETECTORS SDK
+
+## 14. SSD applicability
+
+Investigate the Soroban Security Detectors SDK (SSD).
+
+We want to apply it where relevant.
+
+Official project and installation instructions must be verified.
+
+The tool should be considered for:
+
+- Analysing Soroban contract source code.
+- Detecting missing authorization.
+- Detecting unchecked token transfers.
+- Identifying improper TTL handling.
+- Detecting unsafe storage patterns.
+- Identifying other supported contract security issues.
+
+However, Trustless Work is our chosen escrow engine.
+
+Therefore, distinguish between:
+
+1. Security analysis of TrustFlow's own integration code.
+2. Inspection of publicly available Trustless Work contract source.
+3. Static analysis of contract source that we can actually access.
+4. Verification of the deployed contract and its actual behaviour.
+
+Do not claim that SSD has audited a deployed contract merely because a source repository was scanned.
+
+If our active architecture no longer maintains a custom escrow contract, explain which SSD checks remain applicable and which do not.
+
+Keep the security process practical for the hackathon.
+
+---
+
+# PART 8 — AI AGREEMENT ASSISTANT
+
+## 15. Gemini integration
+
+Preserve the specialised TrustFlow Assistant.
+
+The assistant should help users:
+
+- Describe their agreements naturally.
+- Draft structured agreements.
+- Identify unclear deliverables.
+- Identify missing deadlines.
+- Identify unclear approvers.
+- Detect ambiguous or contradictory conditions.
+- Identify missing cancellation and refund terms.
+- Explain the resulting agreement in plain language.
+
+The assistant should produce structured agreement data rather than unrestricted transaction instructions.
+
+The existing server-side Gemini architecture should be preserved unless a genuine issue is discovered.
+
+Investigate the current model ID and package compatibility before implementation changes.
+
+### AI security boundaries
+
+The AI must never:
+
+- Sign transactions.
+- Fund escrows.
+- Approve fulfilment.
+- Release funds.
+- Refund funds.
+- Access private keys.
+- Independently execute financial actions.
+- Override wallet authorisation.
+- Claim a transaction succeeded without verified transaction results.
+
+Gemini drafts and checks agreements.
+
+The user authorises transactions.
+
+Trustless Work executes the escrow flow.
+
+Stellar provides the authoritative on-chain records.
+
+Server-side validation must remain in place. A system prompt alone is not a security boundary.
+
+---
+
+# PART 9 — DATA AND PERSISTENCE
+
+## 16. On-chain and off-chain responsibilities
+
+TrustFlow should be blockchain-first, but not every application record should be written to Stellar.
+
+### On-chain authority
+
+Use Stellar and Trustless Work for verifiable financial information and escrow state, including:
+
+- Relevant participant addresses.
+- Escrow records.
+- Financial conditions represented by the escrow.
+- Funding.
+- Approval.
+- Release.
+- Supported refund operations.
+- Transaction history and verifiable transaction references.
+
+### Off-chain application data
+
+Use suitable persistent application storage for:
+
+- User profiles.
+- Authentication records.
+- User preferences.
+- Agreement drafts.
+- Searchable agreement indexes.
+- Activity-feed presentation.
+- Notifications.
+- Application settings.
+- Other information that does not need to be public on-chain.
+
+Associate off-chain records with authenticated user accounts and verified Stellar addresses.
+
+A database record must never override contradictory confirmed on-chain state.
+
+Protect participant-specific records with appropriate access controls and row-level security where applicable.
+
+Never store passwords, private keys, seed phrases or unnecessary sensitive personal information on-chain.
+
+## 17. Existing prototype persistence
+
+The existing implementation reportedly uses:
+
+`./.data/agreements.json`
+
+Inspect this implementation.
+
+Determine whether it is appropriate to retain for a temporary prototype or whether persistent account data requires an alternative.
+
+If Supabase is appropriate, assess its integration without introducing unnecessary infrastructure.
+
+Keep service-role credentials server-side.
+
+Do not assume local file persistence is suitable for a production deployment.
+
+---
+
+# PART 10 — NETWORK AND HACKATHON CONFIGURATION
+
+## 18. Stellar Testnet
+
+The initial demonstration should use Stellar Testnet.
+
+Previously identified configuration:
+
+- RPC: `https://soroban-testnet.stellar.org`
+- Network passphrase: `Test SDF Network ; September 2015`
+- Friendbot: `https://friendbot.stellar.org?addr={publicKey}`
+
+Previously identified token references:
+
+XLM SAC:
+`CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`
+
+Circle USDC issuer:
+`GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`
+
+Circle USDC SAC:
+`CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`
+
+Treat these as configuration references that must be checked against current official Stellar and asset documentation before use.
+
+Do not assume USDC funding is available just because an asset identifier is supplied.
+
+If USDC funding or support is unavailable, prioritise a working XLM Testnet flow.
+
+Use the correct token precision and decimal conversion.
+
+Do not use floating-point arithmetic for financial amounts.
+
+---
+
+# PART 11 — IMPLEMENTATION AND INTEGRATION REQUIREMENTS
+
+## 19. Existing environment audit
+
+Inspect the actual environment before changing anything.
+
+Check:
+
+- Node.js version.
+- npm and package manager.
+- React and Vite versions.
+- TypeScript configuration.
+- Express configuration.
+- Existing scripts.
+- Installed dependencies.
+- Environment variables.
+- Gemini configuration.
+- Stellar CLI installation and version.
+- Rust and Cargo.
+- Soroban-related tooling where relevant.
+- Existing wallet dependencies.
+- Existing contract files.
+- Existing generated bindings.
+- Existing deployment configuration.
+
+The previous implementation reportedly uses `tsx server.ts` in development.
+
+Check production compatibility carefully. Do not assume that `node server.ts` is a valid production execution strategy. Either compile TypeScript to JavaScript or use a supported TypeScript runtime, with a coherent production start command.
+
+## 20. Browser API overrides
+
+The previous AI agent made modifications to `index.html` to address errors involving:
+
+- `window.fetch`
+- `window.ethereum`
+- Browser extension injection.
+
+Inspect these modifications carefully.
+
+Do not redefine global browser APIs or introduce fragile getters and setters merely to suppress external Chrome extension errors.
+
+Remove unnecessary defensive hacks if they interfere with the application.
+
+Do not break normal wallet-provider integration.
+
+## 21. Integration boundaries
+
+The final system should have clear responsibilities:
+
+**Pollar**
+Account authentication integration and embedded Stellar wallet infrastructure.
+
+**TrustFlow**
+User experience, account dashboard, agreement drafting, application persistence and activity presentation.
+
+**Gemini**
+Agreement drafting and validation assistance.
+
+**Trustless Work**
+Escrow execution and authoritative escrow lifecycle.
+
+**Userouter**
+Relevant payment-routing and payment capabilities, using its documented guardrails.
+
+**Stellar**
+Underlying blockchain and verifiable transaction records.
+
+**Stellar Raven**
+Development-agent access to Stellar knowledge.
+
+**SSD**
+Applicable Soroban static security analysis.
+
+**Stellar CLI and SDK**
+Development and application-level Stellar operations where required.
+
+Do not create overlapping authorities.
+
+---
+
+# PART 12 — VERIFICATION EXPECTATIONS
+
+## 22. Hackathon approach
+
+This is a hackathon.
+
+We want to move quickly and are comfortable with ambitious integrations and a sophisticated architecture.
+
+We do not want to spend disproportionate time writing exhaustive test suites, constructing unnecessary testing infrastructure or building a large enterprise CI programme.
+
+Prioritise implementation.
+
+However, a financial application must not misrepresent transactions.
+
+Keep verification focused on the essential transaction flow:
+
+- Wallet provisioning and account association work.
+- Wallet authorisation works.
+- Correct participant addresses and amounts are used.
+- Funding is confirmed before showing a funded state.
+- Approval follows the appropriate authority.
+- Release and refund actions follow the selected escrow rules.
+- Pending or failed transactions are not displayed as successful.
+- The displayed agreement and transaction status reflect the authoritative escrow state.
+- AI cannot independently execute transactions.
+- Secrets and authenticated user records are protected.
+
+Do not skip these critical checks.
+
+Do not create a massive test programme.
+
+---
+
+# PART 13 — REMOVALS AND SCOPE CORRECTIONS
+
+## 23. Remove obsolete directions
+
+The following previous directions are superseded:
+
+- Do not implement invitation creation or sharing.
+- Do not build an invitation acceptance flow.
+- Do not build a custom TrustFlow escrow engine.
+- Do not maintain a competing custom Soroban contract in the active transaction path.
+- Do not make external wallet installation a prerequisite if Pollar supports the desired embedded-wallet experience.
+- Do not require wallet connection before registration if the embedded-wallet architecture can provision a wallet during signup.
+- Do not introduce a second payment engine.
+- Do not build our own RPC infrastructure.
+- Do not build unnecessary enterprise testing infrastructure.
+- Do not create a parallel frontend or replace the existing application.
+
+The previous Stage 5 proposal concerning invitations and activity tracking is removed as a separate implementation stage. Activity history remains part of the product experience and must be handled through the account and persistence architecture.
+
+The previous Stage 6 security and independent-verification objective remains approved, but should be proportionate to the hackathon.
+
+---
+
+# PART 14 — FINAL READINESS AUDIT
+
+## 24. What to do now
+
+Before editing files, installing packages or changing the architecture, perform one comprehensive readiness audit.
+
+Use the complete context in this document.
+
+Do not refer to earlier prompts as prerequisites. This document is intended to be the standalone project brief.
+
+Investigate the current codebase and relevant official documentation.
+
+Return one report with the following sections:
+
+### A. Current application status
+What exists, what is functional, what is simulated and what is incomplete.
+
+### B. Final architecture
+Present the proposed architecture and clearly explain the responsibilities of each integration.
+
+### C. Trustless Work
+Identify the recommended version, API/SDK path, configuration and required integration work.
+
+### D. Pollar
+Identify the recommended packages, authentication options, embedded wallet provisioning, custody model, recovery and signing compatibility.
+
+### E. Stellar Raven
+Provide verified setup instructions and explain how the development agent will use it.
+
+### F. Userouter
+Identify the official SDK, capabilities, guardrails and integration boundaries. If the exact project cannot be verified, identify that as an unresolved dependency.
+
+### G. SSD
+Explain where it applies and what it can realistically verify.
+
+### H. Account and data architecture
+Explain authentication, wallet association, persistence, on-chain/off-chain boundaries and returning-user experience.
+
+### I. Existing code changes required
+Identify which existing components should be retained, adapted or removed.
+
+### J. Environment and configuration
+List required packages, environment variables, credentials, deployment requirements and setup steps.
+
+### K. Critical blockers
+List only genuine issues that prevent implementation.
+
+### L. Final implementation sequence
+Give a direct build order that gets us to a complete Work-based Escrow demonstration as quickly as possible.
+
+## 25. Evidence requirements
+
+Classify findings as:
+
+- Verified in existing source code.
+- Verified through official documentation.
+- Inferred but not yet verified.
+- Requires credentials or external configuration.
+- Blocker.
+
+Do not invent:
+
+- Successful installations.
+- Successful wallet creation.
+- Successful MCP connections.
+- Successful API calls.
+- Deployed contracts.
+- Successful transactions.
+- SDK capabilities that are not documented.
+
+Use current official documentation wherever possible.
+
+Do not rely on outdated package examples when a newer official integration exists.
+
+## 26. Stop condition
+
+This is the final architecture and implementation-readiness review.
+
+Do not edit source files.
+
+Do not install packages.
+
+Do not deploy contracts.
+
+Do not begin implementation.
+
+Return the complete report and identify only the remaining decisions or credentials genuinely needed.
+
+After reviewing this report, we intend to proceed directly into implementation rather than continue producing architecture documents.
+
+**Our objective is to build an ambitious, polished TrustFlow dapp on Stellar using existing specialised infrastructure, with Trustless Work as the escrow engine and Pollar as the preferred embedded-wallet onboarding layer. Preserve the work already done, integrate intelligently and prioritise a complete working Testnet experience.**

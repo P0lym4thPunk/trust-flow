@@ -12,28 +12,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <script>
-      (function() {
-        try {
-          var _fetch = window.fetch;
-          var proto = Window.prototype;
-          // Provide both getter and setter on Window.prototype and window
-          // so extensions assigning window.fetch = ... can succeed without throwing
-          Object.defineProperty(proto, 'fetch', {
-            get: function() { return _fetch; },
-            set: function(val) { _fetch = val; },
-            configurable: true,
-            enumerable: true
-          });
-          Object.defineProperty(window, 'fetch', {
-            get: function() { return _fetch; },
-            set: function(val) { _fetch = val; },
-            configurable: true,
-            enumerable: true
-          });
-        } catch (e) {}
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>
