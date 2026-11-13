@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
@@ -13,8 +14,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const IS_PROD = process.env.NODE_ENV === "production";
+
+function resolvePort(): number {
+  const portArgIndex = process.argv.indexOf("--port");
+  if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+    const parsed = parseInt(process.argv[portArgIndex + 1], 10);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  if (process.env.PORT) {
+    const parsed = parseInt(process.env.PORT, 10);
+    if (!Number.isNaN(parsed) && (IS_PROD || parsed !== 8080)) return parsed;
+  }
+  return 3000;
+}
+
+const PORT = resolvePort();
 
 app.use(express.json());
 
@@ -799,12 +814,36 @@ Return structured findings with severity levels:
 
 // Mount Vite middleware in development or serve static in production
 async function startServer() {
+  const httpServer = http.createServer(app);
+
   if (!IS_PROD) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
+    let viteMiddleware: express.RequestHandler | null = null;
+    const viteReady = createViteServer({
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === "true" ? false : { server: httpServer },
+      },
       appType: "spa",
+    })
+      .then((vite) => {
+        viteMiddleware = vite.middlewares;
+        return vite;
+      })
+      .catch((err) => {
+        console.error("Failed to initialize Vite dev middleware:", err);
+        throw err;
+      });
+
+    app.use(async (req, res, next) => {
+      try {
+        if (!viteMiddleware) {
+          await viteReady;
+        }
+        return viteMiddleware!(req, res, next);
+      } catch (err) {
+        next(err);
+      }
     });
-    app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, "dist");
     app.use(express.static(distPath));
@@ -813,7 +852,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`TrustFlow server running on http://0.0.0.0:${PORT} (Production: ${IS_PROD})`);
   });
 }

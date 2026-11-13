@@ -6,28 +6,47 @@
   --font-display: 'Outfit', sans-serif;
   --font-body: 'Plus Jakarta Sans', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
-  
-  /* Stellar Gold & Nebula Purple Theme Tokens */
+
+  /* TrustFlow Calm Fintech Palette */
+  --tf-canvas: #F8F9FB;
+  --tf-surface: #FFFFFF;
+  --tf-surface-subtle: #F1F4F8;
+  --tf-ink: #0F172A;
+  --tf-muted: #5B6475;
+  --tf-border: rgba(15, 23, 42, 0.09);
+
+  /* Brand Accents (Nebula Purple & Warm Stellar Gold) */
   --stellar-gold: #F5D03A;
-  --stellar-gold-dark: #D4AF24;
-  --stellar-gold-light: #FEF7D6;
+  --stellar-gold-hover: #E7BF24;
   --nebula-purple: #4A2574;
-  --nebula-purple-dark: #2D144A;
-  --nebula-purple-light: #F4EEFB;
+  --nebula-purple-soft: rgba(74, 37, 116, 0.08);
+}
+
+.dark {
+  --tf-canvas: #0B0E14;
+  --tf-surface: #121620;
+  --tf-surface-subtle: #181D2A;
+  --tf-ink: #F3F5F9;
+  --tf-muted: #98A2B3;
+  --tf-border: rgba(255, 255, 255, 0.09);
+  --nebula-purple-soft: rgba(167, 139, 250, 0.12);
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
 }
 
 body {
   font-family: var(--font-body);
-  background-color: #F8FAFC;
-  color: #0F172A;
+  background-color: var(--tf-canvas);
+  color: var(--tf-ink);
   margin: 0;
   padding: 0;
+  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
-}
-
-.dark body {
-  background-color: #0B0E14;
-  color: #F8FAFC;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 200ms ease, color 200ms ease;
 }
 
 /* Tabular figures for all financial amounts and timestamps */
@@ -35,49 +54,38 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Custom highlight stroke effect inspired by Stellar brand references */
-.stellar-highlight {
-  background: linear-gradient(120deg, rgba(245, 208, 58, 0.35) 0%, rgba(245, 208, 58, 0.90) 100%);
-  background-repeat: no-repeat;
-  background-size: 100% 42%;
-  background-position: 0 88%;
-}
-
-.dark .stellar-highlight {
-  background: linear-gradient(120deg, rgba(245, 208, 58, 0.25) 0%, rgba(245, 208, 58, 0.85) 100%);
-  background-repeat: no-repeat;
-  background-size: 100% 42%;
-  background-position: 0 88%;
-}
-
-/* Bold brush highlighter behind large numbers/metrics from the reference images */
-.stat-highlight {
-  position: relative;
-  display: inline-block;
-  z-index: 1;
-}
-.stat-highlight::before {
-  content: "";
-  position: absolute;
-  inset: 12% -6% 12% -6%;
-  background: #F5D03A;
-  z-index: -1;
-  opacity: 0.85;
-  border-radius: 4px;
-  transform: rotate(-1deg);
-}
-
-.dark .stat-highlight::before {
-  opacity: 0.9;
-}
-
-/* Reference image dashed border frame */
-.stellar-dashed-border {
-  border: 2px dashed #F5D03A;
-}
-
-/* Display font class */
+/* Display font utility */
 .font-display {
   font-family: var(--font-display);
 }
 
+/* Balanced headings */
+.text-balance {
+  text-wrap: balance;
+}
+
+/* Subtle accent underline highlight for hero phrase */
+.trustflow-underline {
+  background-image: linear-gradient(120deg, rgba(245, 208, 58, 0.38) 0%, rgba(245, 208, 58, 0.72) 100%);
+  background-repeat: no-repeat;
+  background-size: 100% 30%;
+  background-position: 0 90%;
+}
+
+.dark .trustflow-underline {
+  background-image: linear-gradient(120deg, rgba(245, 208, 58, 0.24) 0%, rgba(245, 208, 58, 0.45) 100%);
+}
+
+/* Accessible reduced-motion handling */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

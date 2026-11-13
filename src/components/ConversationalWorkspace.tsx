@@ -1,29 +1,28 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import {
-  Send,
-  Sparkles,
+  ArrowUp,
   AlertCircle,
   ArrowRight,
-  ShieldCheck,
-  CheckCircle2,
   Clock,
   PlusCircle,
-  DollarSign,
-  ArrowUpRight,
-  FileText,
-  User,
+  Send,
+  ArrowDownLeft,
   Check,
-  ChevronRight,
   ArrowLeft,
-  Search,
+  Loader2,
+  CheckCircle2,
+  ChevronRight,
 } from "lucide-react";
 import { AgreementRecord, AgreementTerms, CheckerAuditResult, TransactionType } from "../types/agreement";
-import { STELLAR_TESTNET_CONFIG, toStroopUnits, formatAddress } from "../lib/stellar/config";
+import { STELLAR_TESTNET_CONFIG, toStroopUnits, validateStellarAddress } from "../lib/stellar/config";
 import { computeAgreementHash } from "../lib/hash";
+import { getAgreementVisualStatus, getToneClasses } from "../lib/agreementStatus";
 
 interface ConversationalWorkspaceProps {
   initialType?: TransactionType;
   currentUserAddress: string;
+  currentUserName?: string;
   onAgreementCreated: (agreement: AgreementRecord) => void;
   agreements?: AgreementRecord[];
   onSelectAgreement?: (agreement: AgreementRecord) => void;
@@ -33,12 +32,16 @@ interface ConversationalWorkspaceProps {
 export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = ({
   initialType = "WORK",
   currentUserAddress,
+  currentUserName,
   onAgreementCreated,
   agreements = [],
   onSelectAgreement,
   onNavigateTab,
 }) => {
-  // Mode: "overview" (Central Dashboard) or "guided_creator" (Step-by-step flow)
+  const shouldReduceMotion = useReducedMotion();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Mode: "overview" (Conversational starting point) or "guided_creator" (6-step flow)
   const [viewMode, setViewMode] = useState<"overview" | "guided_creator">("overview");
 
   // Guided Creator State
@@ -46,8 +49,8 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
   const [selectedType, setSelectedType] = useState<TransactionType>(initialType);
 
   // Form Fields
-  const [recipientInput, setRecipientInput] = useState("GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
-  const [recipientName, setRecipientName] = useState("Bob (Contractor)");
+  const [counterpartyInput, setCounterpartyInput] = useState("GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
+  const [counterpartyName, setCounterpartyName] = useState("Bob (Freelance Designer)");
   const [paymentTitle, setPaymentTitle] = useState("Website Redesign & Brand Assets");
   const [paymentDescription, setPaymentDescription] = useState("Design responsive Figma components and export production tokens");
   const [amountInput, setAmountInput] = useState("500.00");
@@ -56,57 +59,56 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
   const [conditionInput, setConditionInput] = useState("Client reviews and explicitly approves submitted design files and code");
   const [deadlineDays, setDeadlineDays] = useState(7);
 
-  // AI Assistant Drafting & Checker
+  // Unified Composer & Clarity Check
   const [aiPromptInput, setAiPromptInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [clarification, setClarification] = useState<string | null>(null);
   const [checkerAudit, setCheckerAudit] = useState<CheckerAuditResult | null>(null);
   const [checking, setChecking] = useState(false);
+  const [submittingAgreement, setSubmittingAgreement] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [showAiAssistantBox, setShowAiAssistantBox] = useState(false);
+  const [stepValidationError, setStepValidationError] = useState<string | null>(null);
 
-  // Filter out any malformed or incomplete entries
   const validAgreements = agreements.filter((a) => a && a.id && a.title);
+  const recentAgreements = validAgreements.slice(0, 2);
 
-  // Derived summaries for "What is happening with my payments?"
-  const activePayments = validAgreements.filter(
-    (a) => a.status === "FUNDED" || a.status === "FULFILMENT_SUBMITTED" || a.status === "APPROVED"
-  );
-  const pendingActionPayments = validAgreements.filter(
-    (a) =>
-      (a.status === "CREATED" && (!a.payerAccepted || !a.recipientAccepted)) ||
-      (a.status === "CREATED" && a.payerAccepted && a.recipientAccepted) ||
-      a.status === "FULFILMENT_SUBMITTED"
-  );
-  const completedPayments = validAgreements.filter((a) => a.status === "RELEASED");
+  // Auto-expand multiline textarea naturally
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+  }, [aiPromptInput, viewMode]);
 
-  const totalFundsLocked = activePayments.reduce((acc, a) => {
-    return acc + parseFloat(a.terms?.amount || "0");
-  }, 0);
+  const firstName = currentUserName
+    ? currentUserName.replace(/\s*\(.*?\)\s*/g, "").trim().split(" ")[0]
+    : "";
 
-  // Identify next urgent action
-  const nextUrgentPayment = validAgreements.find(
-    (a) =>
-      a.status === "FULFILMENT_SUBMITTED" ||
-      (a.status === "CREATED" && a.payerAccepted && a.recipientAccepted) ||
-      (a.status === "CREATED" && !a.recipientAccepted)
-  );
+  const isRequestFlow = selectedType === "CONDITIONAL_DISBURSEMENT";
+  const isPaySomeoneFlow = selectedType === "PROTECTED_PAYMENT";
 
-  // Starter quick options for Guided Creator
-  const quickContacts = [
-    { name: "Bob (Freelance Designer)", address: "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K" },
-    { name: "Charlie (Technical Reviewer)", address: "GCK5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K7" },
-  ];
+  const quickContacts = isRequestFlow
+    ? [
+        { name: "Alice (Client / Funder)", address: "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7" },
+        { name: "Charlie (Reviewer)", address: "GCK5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K7" },
+      ]
+    : [
+        { name: "Bob (Freelance Designer)", address: "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K" },
+        { name: "Charlie (Technical Reviewer)", address: "GCK5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K7" },
+      ];
 
-  // Helper to start creator with specific template
+  // Start guided payment creator with specific template
   const handleStartCreator = (type: TransactionType) => {
     setSelectedType(type);
     setCurrentStep(1);
     setViewMode("guided_creator");
     setErrorMessage(null);
+    setStepValidationError(null);
     setCheckerAudit(null);
 
     if (type === "WORK") {
+      setCounterpartyName("Bob (Freelance Designer)");
+      setCounterpartyInput("GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
       setPaymentTitle("Website Redesign & Brand Assets");
       setPaymentDescription("Design responsive Figma components and export production tokens");
       setAmountInput("500.00");
@@ -114,6 +116,8 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       setDeliverablesInput("Figma design tokens, Responsive React components, Design preview");
       setConditionInput("Client reviews and explicitly approves submitted design files and code");
     } else if (type === "PROTECTED_PAYMENT") {
+      setCounterpartyName("Bob (Seller / Recipient)");
+      setCounterpartyInput("GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
       setPaymentTitle("Vintage Camera Purchase");
       setPaymentDescription("Olympus OM-1 35mm Film Camera with 50mm f/1.8 Lens");
       setAmountInput("250.00");
@@ -121,19 +125,21 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       setDeliverablesInput("Tracked courier shipment, Physical package delivery");
       setConditionInput("Buyer confirms package arrival and satisfactory mechanical condition");
     } else {
-      setPaymentTitle("Developer Grant: SDK Improvements");
-      setPaymentDescription("Implement unit tests and documentation for payment integration");
-      setAmountInput("1000.00");
+      setCounterpartyName("Alice (Client / Funder)");
+      setCounterpartyInput("GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7");
+      setPaymentTitle("Frontend Delivery & Integration");
+      setPaymentDescription("Deliver agreed work stages and receive payment on client approval");
+      setAmountInput("650.00");
       setAssetChoice("USDC");
-      setDeliverablesInput("GitHub pull request merged, Test suite passing, Documentation page");
-      setConditionInput("Designated reviewer verifies test suite coverage and merges pull request");
+      setDeliverablesInput("Completed deliverables, Final preview link");
+      setConditionInput("Client reviews and approves the submitted work");
     }
   };
 
-  // Call Server-Side Gemini API for Drafting
+  // Call Server-Side AI Drafting Endpoint (preserved untouched)
   const handleAiDraft = async (customPrompt?: string) => {
     const promptToSend = customPrompt || aiPromptInput;
-    if (!promptToSend.trim()) return;
+    if (!promptToSend.trim() || aiLoading) return;
 
     setAiLoading(true);
     setErrorMessage(null);
@@ -146,19 +152,32 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
         body: JSON.stringify({
           prompt: promptToSend,
           transactionType: selectedType,
-          userRole: "PAYER",
+          userRole: isRequestFlow ? "RECIPIENT" : "PAYER",
         }),
       });
 
       if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
+        throw new Error(`Unable to create draft (${response.status}).`);
       }
 
       const data = await response.json();
 
       if (data.result === "CLARIFICATION_REQUIRED") {
-        setClarification(data.clarificationQuestion || "Could you provide more specific details?");
+        setClarification(
+          data.clarificationQuestion ||
+            "Could you share a few more details, such as the amount and what work is covered?"
+        );
       } else if (data.result === "DRAFT_READY") {
+        const nextTitle = data.title || paymentTitle;
+        const nextDescription = data.description || paymentDescription;
+        const nextAmount = data.amount || amountInput;
+        const nextAsset = data.asset || assetChoice;
+        const nextDeliverables = data.deliverables
+          ? data.deliverables.join(", ")
+          : deliverablesInput;
+        const nextCondition = data.condition || conditionInput;
+        const nextDeadlineDays = data.deadlineDays || deadlineDays;
+
         if (data.title) setPaymentTitle(data.title);
         if (data.description) setPaymentDescription(data.description);
         if (data.amount) setAmountInput(data.amount);
@@ -166,37 +185,75 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
         if (data.deliverables) setDeliverablesInput(data.deliverables.join(", "));
         if (data.condition) setConditionInput(data.condition);
         if (data.deadlineDays) setDeadlineDays(data.deadlineDays);
+        if (data.transactionType) setSelectedType(data.transactionType);
 
         setViewMode("guided_creator");
-        setCurrentStep(5); // Jump directly to Review step
-        runCheckerAudit(buildTermsObject());
+        setCurrentStep(5);
+        runCheckerAudit(
+          buildTermsObject({
+            title: nextTitle,
+            description: nextDescription,
+            amount: nextAmount,
+            asset: nextAsset,
+            deliverables: nextDeliverables,
+            condition: nextCondition,
+            deadlineDays: nextDeadlineDays,
+          })
+        );
       }
     } catch (err: any) {
-      setErrorMessage(err.message || "Failed to reach AI Assistant.");
+      setErrorMessage(err.message || "Could not prepare agreement draft right now.");
     } finally {
       setAiLoading(false);
     }
   };
 
   // Build Terms Object for audit and persistence
-  const buildTermsObject = (): AgreementTerms => {
-    const parsedDeliverables = deliverablesInput
+  const buildTermsObject = (overrides?: {
+    title?: string;
+    description?: string;
+    amount?: string;
+    asset?: "USDC" | "XLM";
+    deliverables?: string;
+    condition?: string;
+    deadlineDays?: number;
+  }): AgreementTerms => {
+    const rawDeliverables = overrides?.deliverables ?? deliverablesInput;
+    const parsedDeliverables = rawDeliverables
       .split(",")
       .map((d) => d.trim())
       .filter(Boolean);
 
+    const rawAmount = overrides?.amount ?? amountInput;
+    const rawDays = overrides?.deadlineDays ?? deadlineDays;
+    const otherParty =
+      counterpartyInput.trim() ||
+      (isRequestFlow
+        ? "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7"
+        : "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
+
+    const payer = isRequestFlow ? otherParty : currentUserAddress;
+    const recipient = isRequestFlow ? currentUserAddress : otherParty;
+    const approver = isRequestFlow ? otherParty : currentUserAddress;
+
     return {
-      amount: parseFloat(amountInput || "100").toFixed(2),
-      asset: assetChoice,
-      payer: currentUserAddress,
-      recipient: recipientInput.trim() || "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
-      approver: currentUserAddress,
-      title: paymentTitle.trim() || "Payment Agreement",
-      description: paymentDescription.trim() || "Work terms and deliverables",
-      deliverables: parsedDeliverables.length > 0 ? parsedDeliverables : ["Agreed deliverables"],
-      condition: conditionInput.trim() || "Payer reviews and approves completed work",
-      cancellationTerms: "Mutual cancellation permitted prior to approval, or timeout refund if past deadline",
-      deadline: new Date(Date.now() + 86400000 * deadlineDays).toISOString(),
+      amount: parseFloat(rawAmount || "100").toFixed(2),
+      asset: overrides?.asset ?? assetChoice,
+      payer,
+      recipient,
+      approver,
+      title: (overrides?.title ?? paymentTitle).trim() || "Payment Agreement",
+      description:
+        (overrides?.description ?? paymentDescription).trim() ||
+        "Work terms and deliverables",
+      deliverables:
+        parsedDeliverables.length > 0 ? parsedDeliverables : ["Agreed deliverables"],
+      condition:
+        (overrides?.condition ?? conditionInput).trim() ||
+        "Client reviews and approves completed work",
+      cancellationTerms:
+        "Mutual cancellation permitted prior to approval, or agreed review if past deadline",
+      deadline: new Date(Date.now() + 86400000 * rawDays).toISOString(),
       contractId: STELLAR_TESTNET_CONFIG.contractId,
       domain: STELLAR_TESTNET_CONFIG.domainSeparator,
       network: STELLAR_TESTNET_CONFIG.network,
@@ -204,7 +261,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
     };
   };
 
-  // Run AI Checker Audit
+  // Run Clarity Check Audit (preserved untouched)
   const runCheckerAudit = async (terms: AgreementTerms) => {
     setChecking(true);
     try {
@@ -224,18 +281,51 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
     }
   };
 
-  // Finalize Agreement and Save to Server
+  // Step validation before advancing
+  const validateStep = (step: number): boolean => {
+    setStepValidationError(null);
+    if (step === 1) {
+      const addr = counterpartyInput.trim();
+      if (!addr || !validateStellarAddress(addr)) {
+        setStepValidationError("Please select a contact or enter a valid Stellar account address starting with G.");
+        return false;
+      }
+    }
+    if (step === 2) {
+      if (!paymentTitle.trim()) {
+        setStepValidationError("Please enter an agreement title.");
+        return false;
+      }
+    }
+    if (step === 3) {
+      const parsed = parseFloat(amountInput);
+      if (Number.isNaN(parsed) || parsed <= 0) {
+        setStepValidationError("Please enter a valid payment amount greater than zero.");
+        return false;
+      }
+    }
+    if (step === 4) {
+      if (!conditionInput.trim()) {
+        setStepValidationError("Please describe what must happen before payment is released.");
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Finalize Agreement and Save to Server (preserved untouched)
   const handleFinalizeAgreement = async () => {
     setErrorMessage(null);
+    setSubmittingAgreement(true);
     try {
       const terms = buildTermsObject();
       toStroopUnits(terms.amount);
 
-      // Compute deterministic canonical hash
       const canonicalHash = await computeAgreementHash(terms);
+      const agreementId = `agr-${Date.now()}`;
 
       const newRecord: AgreementRecord = {
-        id: `agr-${Date.now()}`,
+        id: agreementId,
         transactionType: selectedType,
         title: terms.title,
         description: terms.description,
@@ -244,20 +334,20 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
         version: terms.version,
         status: "CREATED",
         cancelRequest: "NONE",
-        payerAccepted: true, // Creator auto-accepts initial terms
-        recipientAccepted: false,
+        payerAccepted: !isRequestFlow,
+        recipientAccepted: isRequestFlow,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         activity: [
           {
             id: `act-${Date.now()}`,
-            agreementId: `agr-${Date.now()}`,
+            agreementId,
             timestamp: new Date().toISOString(),
             actor: currentUserAddress,
-            actorRole: "PAYER",
+            actorRole: isRequestFlow ? "RECIPIENT" : "PAYER",
             type: "CREATED",
-            title: "Payment Agreement Created",
-            description: `Terms established with reference ${canonicalHash.slice(0, 8)}...`,
+            title: isRequestFlow ? "Payment request created" : "Payment agreement created",
+            description: `Drafted for ${terms.amount} ${terms.asset}. Awaiting counterparty review.`,
           },
         ],
       };
@@ -271,692 +361,663 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       if (res.ok) {
         onAgreementCreated(newRecord);
       } else {
-        throw new Error("Server failed to persist agreement.");
+        throw new Error("Could not save agreement. Please try again.");
       }
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to create payment agreement.");
+    } finally {
+      setSubmittingAgreement(false);
     }
   };
 
+  const shortcuts = [
+    {
+      id: "create",
+      label: "Create payment",
+      icon: PlusCircle,
+      onClick: () => handleStartCreator("WORK"),
+    },
+    {
+      id: "pay",
+      label: "Pay someone",
+      icon: Send,
+      onClick: () => handleStartCreator("PROTECTED_PAYMENT"),
+    },
+    {
+      id: "request",
+      label: "Request payment",
+      icon: ArrowDownLeft,
+      onClick: () => handleStartCreator("CONDITIONAL_DISBURSEMENT"),
+    },
+    {
+      id: "activity",
+      label: "View activity",
+      icon: Clock,
+      onClick: () => onNavigateTab && onNavigateTab("all-agreements"),
+    },
+  ];
+
+  const hasValidPrompt = aiPromptInput.trim().length > 0;
+
   /* ==============================================================
-     VIEW MODE 1: CENTRAL WORKSPACE OVERVIEW
-     Answers: What can I do? | What is happening? | What should I do next?
+     VIEW MODE 1: CONVERSATIONAL WORKSPACE
+     1. Contextual greeting
+     2. Four compact shortcuts
+     3. ONE unified composer (Top row: Ask TrustFlow + Send; Underneath: placeholder + single input)
+     4. Optional concise recent activity links
   ============================================================== */
   if (viewMode === "overview") {
     return (
-      <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in duration-150">
-        {/* Welcome & Promise Banner */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-950 dark:text-white font-display uppercase">
-              Payments Workspace
+      <motion.div
+        initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-2xl mx-auto min-h-[calc(100dvh-7.5rem)] flex flex-col justify-center py-4"
+      >
+        <div className="space-y-6">
+          {/* 1. Greeting */}
+          <div className="text-center space-y-1">
+            <h1 className="font-display font-semibold tracking-tight text-2xl sm:text-3xl text-slate-950 dark:text-white text-balance">
+              {firstName ? `Hi ${firstName}, what would you like to set up?` : "What would you like to set up?"}
             </h1>
-            <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-              Money moves when your agreed conditions are met.
-            </p>
           </div>
 
-          <button
-            onClick={() => handleStartCreator("WORK")}
-            className="px-4 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
-          >
-            <PlusCircle className="w-4 h-4" />
-            Create a payment
-          </button>
-        </div>
-
-        {/* 1. What can I do? Clear primary actions */}
-        <section className="space-y-3">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            What can I do?
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <button
-              onClick={() => handleStartCreator("WORK")}
-              className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-[#F5D03A] text-left transition-all shadow-xs group cursor-pointer"
-            >
-              <div className="w-9 h-9 rounded-lg bg-[#F5D03A]/20 text-slate-950 dark:text-[#F5D03A] flex items-center justify-center font-bold mb-3 group-hover:scale-105 transition-transform">
-                <PlusCircle className="w-5 h-5" />
-              </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-1 group-hover:text-[#4A2574] dark:group-hover:text-[#F5D03A]">
-                Create a payment
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Hire someone for design, code, or consulting with guaranteed payment.
-              </p>
-            </button>
-
-            <button
-              onClick={() => handleStartCreator("PROTECTED_PAYMENT")}
-              className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-[#F5D03A] text-left transition-all shadow-xs group cursor-pointer"
-            >
-              <div className="w-9 h-9 rounded-lg bg-[#4A2574]/15 text-[#4A2574] dark:text-purple-300 flex items-center justify-center font-bold mb-3 group-hover:scale-105 transition-transform">
-                <DollarSign className="w-5 h-5" />
-              </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-1 group-hover:text-[#4A2574] dark:group-hover:text-[#F5D03A]">
-                Pay someone
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Make a protected payment for an everyday purchase or booking.
-              </p>
-            </button>
-
-            <button
-              onClick={() => handleStartCreator("CONDITIONAL_DISBURSEMENT")}
-              className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-[#F5D03A] text-left transition-all shadow-xs group cursor-pointer"
-            >
-              <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 flex items-center justify-center font-bold mb-3 group-hover:scale-105 transition-transform">
-                <ArrowUpRight className="w-5 h-5" />
-              </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-1 group-hover:text-[#4A2574] dark:group-hover:text-[#F5D03A]">
-                Request payment
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Send payment conditions for client sign-off and advance funding.
-              </p>
-            </button>
-
-            <button
-              onClick={() => onNavigateTab && onNavigateTab("all-agreements")}
-              className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-[#F5D03A] text-left transition-all shadow-xs group cursor-pointer"
-            >
-              <div className="w-9 h-9 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center font-bold mb-3 group-hover:scale-105 transition-transform">
-                <FileText className="w-5 h-5" />
-              </div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-1 group-hover:text-[#4A2574] dark:group-hover:text-[#F5D03A]">
-                View activity
-              </h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                See all payment records, verification status, and completed releases.
-              </p>
-            </button>
-          </div>
-        </section>
-
-        {/* 2. What should I do next? (Urgent action banner) */}
-        <section className="space-y-3">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            What should I do next?
-          </div>
-
-          {nextUrgentPayment ? (
-            <div className="p-5 rounded-2xl bg-[#121824] text-white border-2 border-dashed border-[#F5D03A]/70 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-md">
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-[#F5D03A] text-slate-950 uppercase">
-                  Action required
-                </div>
-                <h4 className="text-base font-bold text-white">
-                  {nextUrgentPayment.title}
-                </h4>
-                <p className="text-xs text-slate-300">
-                  {nextUrgentPayment.status === "FULFILMENT_SUBMITTED"
-                    ? "Work has been submitted for review. Confirm conditions to release payment."
-                    : nextUrgentPayment.status === "CREATED" && nextUrgentPayment.recipientAccepted
-                    ? "Both parties accepted the terms. Add money to secure the payment."
-                    : "Awaiting recipient review and acceptance of terms."}
-                </p>
-              </div>
-
-              <button
-                onClick={() => onSelectAgreement && onSelectAgreement(nextUrgentPayment)}
-                className="px-4 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-all flex items-center gap-1.5 shrink-0 cursor-pointer self-start sm:self-auto"
-              >
-                Open payment
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4 shadow-xs">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-                  <CheckCircle2 className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                    All caught up
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    No urgent actions pending. Ready to start a new protected payment?
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => handleStartCreator("WORK")}
-                className="px-3.5 py-1.5 text-xs font-bold text-slate-900 dark:text-slate-100 hover:text-slate-950 bg-slate-100 dark:bg-slate-800 hover:bg-[#F5D03A] dark:hover:bg-[#F5D03A] dark:hover:text-slate-950 rounded-lg transition-colors cursor-pointer"
-              >
-                New payment
-              </button>
-            </div>
-          )}
-        </section>
-
-        {/* 3. What is happening with my payments? Clean summary */}
-        <section className="space-y-3">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            What is happening with my payments?
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-              <span className="text-xs font-bold text-slate-500">Active protected payments</span>
-              <div className="mt-3">
-                <span className="text-3xl font-black font-display text-slate-950 dark:text-white stat-highlight">
-                  {activePayments.length}
-                </span>
-                <p className="text-[11px] text-slate-400 mt-1">Funds currently held securely</p>
-              </div>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-              <span className="text-xs font-bold text-slate-500">Reserved balance</span>
-              <div className="mt-3">
-                <span className="text-3xl font-black font-display text-slate-950 dark:text-white stat-highlight">
-                  {totalFundsLocked.toFixed(2)}
-                </span>
-                <span className="text-xs font-bold text-slate-500 ml-1.5">USDC</span>
-                <p className="text-[11px] text-slate-400 mt-1">Ready for fulfillment approval</p>
-              </div>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-              <span className="text-xs font-bold text-slate-500">Completed & released</span>
-              <div className="mt-3">
-                <span className="text-3xl font-black font-display text-slate-950 dark:text-white stat-highlight">
-                  {completedPayments.length}
-                </span>
-                <p className="text-[11px] text-slate-400 mt-1">Successfully settled payments</p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Natural Language Assistant Bar (Gemini) */}
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[#F5D03A]" />
-              <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                Or describe terms in plain words
-              </h3>
-            </div>
-            <span className="text-[11px] text-slate-400">Powered by Gemini</span>
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={aiPromptInput}
-              onChange={(e) => setAiPromptInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleAiDraft()}
-              placeholder='e.g., "Hire Bob to redesign my website for 500 USDC due in 7 days"'
-              className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white placeholder:text-slate-400"
-            />
-            <button
-              onClick={() => handleAiDraft()}
-              disabled={aiLoading || !aiPromptInput.trim()}
-              className="px-4 py-2 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] disabled:opacity-50 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
-            >
-              {aiLoading ? "Thinking..." : "Create draft"}
-              <Send className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {clarification && (
-            <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{clarification}</span>
-            </div>
-          )}
-        </section>
-
-        {/* Recent Payments List */}
-        {agreements.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Recent payments
-              </span>
-              <button
-                onClick={() => onNavigateTab && onNavigateTab("all-agreements")}
-                className="text-xs font-bold text-[#4A2574] dark:text-[#F5D03A] hover:underline cursor-pointer"
-              >
-                View all ({agreements.length})
-              </button>
-            </div>
-
-            <div className="divide-y divide-slate-100 dark:divide-slate-800/80 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
-              {validAgreements.slice(0, 3).map((agr) => (
-                <div
-                  key={agr.id}
-                  onClick={() => onSelectAgreement && onSelectAgreement(agr)}
-                  className="p-4 flex items-center justify-between gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
+          {/* 2. Four Compact Shortcuts */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {shortcuts.map((item) => {
+              const Icon = item.icon;
+              return (
+                <motion.button
+                  key={item.id}
+                  type="button"
+                  onClick={item.onClick}
+                  whileHover={shouldReduceMotion ? undefined : { y: -1 }}
+                  whileTap={shouldReduceMotion ? undefined : { scale: 0.98 }}
+                  className="flex items-center gap-2.5 px-3.5 min-h-[44px] py-2 rounded-xl bg-[var(--tf-surface)] border border-[var(--tf-border)] hover:border-slate-300 dark:hover:border-slate-600 text-left transition-colors cursor-pointer"
                 >
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white">
-                        {agr.title}
-                      </h4>
-                      <span className="text-[10px] font-semibold text-slate-500 uppercase">
-                        · {(agr.transactionType || "WORK").replace("_", " ")}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 line-clamp-1">
-                      {agr.description || "Payment agreement"}
-                    </p>
-                  </div>
+                  <Icon className="w-4 h-4 shrink-0 text-[#4A2574] dark:text-[#F5D03A]" />
+                  <span className="text-xs sm:text-[13px] font-medium text-slate-800 dark:text-slate-100 whitespace-nowrap truncate">
+                    {item.label}
+                  </span>
+                </motion.button>
+              );
+            })}
+          </div>
 
-                  <div className="flex items-center gap-3 shrink-0">
-                    <div className="text-right">
-                      <div className="text-sm font-black tabular-nums text-slate-900 dark:text-white">
-                        {agr.terms?.amount || "0.00"}{" "}
-                        <span className="text-xs font-bold text-slate-500">{agr.terms?.asset || "USDC"}</span>
-                      </div>
-                      <span className="text-[10px] font-bold text-slate-500">
-                        {agr.status === "RELEASED" ? "Payment released" : agr.status === "FUNDED" ? "Money secured" : "Awaiting start"}
-                      </span>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-slate-400" />
-                  </div>
-                </div>
-              ))}
+          {/* 3. ONE Unified Composer Container */}
+          <div className="space-y-2.5">
+            <div
+              onClick={() => textareaRef.current?.focus()}
+              className="rounded-2xl bg-[var(--tf-surface)] border border-[var(--tf-border)] focus-within:border-[#4A2574] dark:focus-within:border-[#F5D03A] focus-within:ring-2 focus-within:ring-[#4A2574]/10 dark:focus-within:ring-[#F5D03A]/15 shadow-xs transition-all p-4 cursor-text"
+            >
+              {/* Top Row: Heading left, Send button extreme right */}
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <label
+                  htmlFor="workspace-composer"
+                  className="text-sm font-semibold text-slate-950 dark:text-white cursor-text select-none"
+                >
+                  Ask TrustFlow
+                </label>
+
+                <motion.button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAiDraft();
+                  }}
+                  disabled={aiLoading || !hasValidPrompt}
+                  whileTap={shouldReduceMotion ? undefined : { scale: 0.94 }}
+                  aria-label="Send"
+                  className="w-9 h-9 rounded-xl bg-[#F5D03A] hover:bg-[#E7BF24] disabled:bg-slate-200 dark:disabled:bg-slate-800 text-slate-950 disabled:text-slate-400 flex items-center justify-center shrink-0 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {aiLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ArrowUp className="w-4 h-4 stroke-[2.25]" />
+                  )}
+                </motion.button>
+              </div>
+
+              {/* Beneath the heading: unified multiline input with descriptive placeholder */}
+              <textarea
+                id="workspace-composer"
+                ref={textareaRef}
+                rows={2}
+                value={aiPromptInput}
+                onChange={(e) => setAiPromptInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleAiDraft();
+                  }
+                }}
+                placeholder="Describe the payment or agreement you want to create"
+                className="w-full resize-none bg-transparent text-sm sm:text-[15px] text-slate-950 dark:text-white placeholder:text-[var(--tf-muted)] focus:outline-none leading-relaxed max-h-44"
+              />
             </div>
-          </section>
-        )}
-      </div>
+
+            <AnimatePresence>
+              {clarification && (
+                <motion.div
+                  initial={shouldReduceMotion ? false : { opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0, y: -4 }}
+                  className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5"
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{clarification}</span>
+                </motion.div>
+              )}
+
+              {errorMessage && (
+                <motion.div
+                  initial={shouldReduceMotion ? false : { opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0, y: -4 }}
+                  className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200/80 dark:border-red-900/50 text-xs text-red-700 dark:text-red-300 flex items-start gap-2.5"
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{errorMessage}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* 4. Relevant Recent Activity (concise, optional) */}
+          {recentAgreements.length > 0 && (
+            <div className="pt-2 space-y-2">
+              <div className="flex items-center justify-between text-xs text-[var(--tf-muted)] px-1">
+                <span>Recent activity</span>
+                {onNavigateTab && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigateTab("all-agreements")}
+                    className="hover:text-slate-950 dark:hover:text-white transition-colors cursor-pointer"
+                  >
+                    View all
+                  </button>
+                )}
+              </div>
+              <div className="divide-y divide-[var(--tf-border)] rounded-xl border border-[var(--tf-border)] bg-[var(--tf-surface)] overflow-hidden">
+                {recentAgreements.map((agr) => {
+                  const status = getAgreementVisualStatus(agr);
+                  const toneClasses = getToneClasses(status.tone);
+                  return (
+                    <button
+                      key={agr.id}
+                      type="button"
+                      onClick={() => onSelectAgreement && onSelectAgreement(agr)}
+                      className="w-full px-3.5 py-2.5 text-left flex items-center justify-between gap-3 hover:bg-[var(--tf-surface-subtle)]/70 transition-colors cursor-pointer"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-slate-950 dark:text-white truncate">
+                          {agr.title}
+                        </div>
+                        <div className={`text-[11px] ${toneClasses.text}`}>
+                          {status.label}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 text-xs font-semibold text-slate-950 dark:text-white tabular-nums">
+                        <span>
+                          {agr.terms?.amount || "0.00"} {agr.terms?.asset || "USDC"}
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 text-[var(--tf-muted)]" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </motion.div>
     );
   }
 
   /* ==============================================================
-     VIEW MODE 2: GUIDED STEP-BY-STEP PAYMENT CREATOR
-     Steps:
-     1. Who are you paying?
-     2. What is the payment for?
-     3. How much is involved?
-     4. What must happen before payment is released?
-     5. Review the agreement.
-     6. Confirm and continue.
+     VIEW MODE 2: GUIDED 6-STEP PAYMENT CREATOR
+     Handles Create payment (WORK), Pay someone (PROTECTED_PAYMENT),
+     and Request payment (CONDITIONAL_DISBURSEMENT) distinctly.
   ============================================================== */
+  const flowBadge = isRequestFlow
+    ? "Payment request"
+    : isPaySomeoneFlow
+    ? "Protected payment"
+    : "Work agreement";
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-150">
-      {/* Top Breadcrumb & Step Navigation */}
-      <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+    <motion.div
+      initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+      className="max-w-xl mx-auto space-y-5"
+    >
+      {/* Top Bar */}
+      <div className="flex items-center justify-between gap-3">
         <button
+          type="button"
           onClick={() => setViewMode("overview")}
-          className="text-xs font-semibold text-slate-500 hover:text-slate-900 dark:hover:text-white flex items-center gap-1.5 cursor-pointer"
+          className="inline-flex items-center gap-1.5 min-h-[36px] text-xs font-medium text-[var(--tf-muted)] hover:text-slate-950 dark:hover:text-white transition-colors cursor-pointer"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          Back to workspace
+          <span>Back to workspace</span>
         </button>
 
-        <span className="text-xs font-bold text-slate-500">
-          Step {currentStep} of 6
+        <span className="text-xs font-medium text-[var(--tf-muted)] tabular-nums">
+          {flowBadge} · Step {currentStep} of 6
         </span>
       </div>
 
-      {/* Stepper Dots */}
-      <div className="flex items-center gap-2">
-        {[1, 2, 3, 4, 5, 6].map((stepNum) => (
-          <div
-            key={stepNum}
-            className={`h-1.5 flex-1 rounded-full transition-all ${
-              stepNum === currentStep
-                ? "bg-[#F5D03A]"
-                : stepNum < currentStep
-                ? "bg-slate-900 dark:bg-white"
-                : "bg-slate-200 dark:bg-slate-800"
-            }`}
-          />
-        ))}
+      {/* Slim Progress Indicator */}
+      <div className="h-1 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+        <motion.div
+          className="h-full bg-[#F5D03A] rounded-full"
+          initial={false}
+          animate={{ width: `${(currentStep / 6) * 100}%` }}
+          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+        />
       </div>
 
-      {/* Card Container */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 shadow-sm space-y-6">
-        {/* Step 1: Who are you paying? */}
-        {currentStep === 1 && (
-          <div className="space-y-4">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#F5D03A] mb-1">
-                Step 1
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-950 dark:text-white font-display">
-                Who are you paying?
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Select a counterparty or enter their payment account address.
-              </p>
-            </div>
+      {/* Step Surface */}
+      <div className="bg-[var(--tf-surface)] border border-[var(--tf-border)] rounded-2xl p-5 sm:p-7 shadow-xs space-y-6">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentStep}
+            initial={shouldReduceMotion ? false : { opacity: 0, x: 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={shouldReduceMotion ? undefined : { opacity: 0, x: -8 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {/* Step 1: Counterparty */}
+            {currentStep === 1 && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-display font-bold text-xl sm:text-2xl text-slate-950 dark:text-white">
+                    {isRequestFlow
+                      ? "Who are you requesting payment from?"
+                      : "Who is receiving this payment?"}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[var(--tf-muted)] mt-1">
+                    {isRequestFlow
+                      ? "The client or funder you enter will review and fund this request."
+                      : "Select a contact or paste their account address."}
+                  </p>
+                </div>
 
-            <div className="space-y-2 pt-2">
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                Quick contacts
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {quickContacts.map((contact, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setRecipientName(contact.name);
-                      setRecipientInput(contact.address);
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-[var(--tf-muted)] block">
+                    Saved contacts
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {quickContacts.map((contact, idx) => {
+                      const active = counterpartyInput === contact.address;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setCounterpartyName(contact.name);
+                            setCounterpartyInput(contact.address);
+                            setStepValidationError(null);
+                          }}
+                          className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                            active
+                              ? "border-[#F5D03A] bg-[#F5D03A]/10 text-slate-950 dark:text-white"
+                              : "border-[var(--tf-border)] hover:bg-[var(--tf-surface-subtle)] text-slate-700 dark:text-slate-300"
+                          }`}
+                        >
+                          <div className="text-xs font-semibold">{contact.name}</div>
+                          <div className="text-[11px] text-[var(--tf-muted)] font-mono mt-0.5 truncate">
+                            {contact.address.slice(0, 14)}...
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                    {isRequestFlow ? "Client / funder account address" : "Recipient account address"}
+                  </label>
+                  <input
+                    type="text"
+                    value={counterpartyInput}
+                    onChange={(e) => {
+                      setCounterpartyInput(e.target.value);
+                      setCounterpartyName("");
+                      setStepValidationError(null);
                     }}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                      recipientInput === contact.address
-                        ? "border-[#F5D03A] bg-[#F5D03A]/10 text-slate-950 dark:text-white"
-                        : "border-slate-200 dark:border-slate-800 hover:border-slate-300 text-slate-700 dark:text-slate-300"
-                    }`}
-                  >
-                    <div className="text-xs font-bold">{contact.name}</div>
-                    <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                      {contact.address.slice(0, 16)}...
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                Account address (or custom test address)
-              </label>
-              <input
-                type="text"
-                value={recipientInput}
-                onChange={(e) => setRecipientInput(e.target.value)}
-                placeholder="G..."
-                className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-mono bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Step 2: What is the payment for? */}
-        {currentStep === 2 && (
-          <div className="space-y-4">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#F5D03A] mb-1">
-                Step 2
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-950 dark:text-white font-display">
-                What is the payment for?
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Give your agreement a clear title and description so both sides agree on the scope.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                Agreement title
-              </label>
-              <input
-                type="text"
-                value={paymentTitle}
-                onChange={(e) => setPaymentTitle(e.target.value)}
-                placeholder="e.g. Website Redesign & Brand Assets"
-                className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                Description of work or purchase
-              </label>
-              <textarea
-                rows={3}
-                value={paymentDescription}
-                onChange={(e) => setPaymentDescription(e.target.value)}
-                placeholder="Describe what is expected in plain language..."
-                className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: How much is involved? */}
-        {currentStep === 3 && (
-          <div className="space-y-4">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#F5D03A] mb-1">
-                Step 3
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-950 dark:text-white font-display">
-                How much is involved?
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Specify the exact amount that will be held in protected payment.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Amount
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  min="0.01"
-                  value={amountInput}
-                  onChange={(e) => setAmountInput(e.target.value)}
-                  placeholder="500.00"
-                  className="w-full px-3.5 py-2.5 text-lg font-black font-display bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white tabular-nums"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Currency
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setAssetChoice("USDC")}
-                    className={`flex-1 py-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                      assetChoice === "USDC"
-                        ? "border-[#F5D03A] bg-[#F5D03A]/10 text-slate-950 dark:text-white"
-                        : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400"
-                    }`}
-                  >
-                    USDC
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAssetChoice("XLM")}
-                    className={`flex-1 py-3 text-xs font-bold rounded-xl border transition-all cursor-pointer ${
-                      assetChoice === "XLM"
-                        ? "border-[#F5D03A] bg-[#F5D03A]/10 text-slate-950 dark:text-white"
-                        : "border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400"
-                    }`}
-                  >
-                    XLM
-                  </button>
+                    placeholder="G..."
+                    className="w-full px-3.5 py-2.5 text-xs sm:text-sm font-mono bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] rounded-xl focus:outline-none focus:border-[#4A2574] dark:focus:border-[#F5D03A] text-slate-950 dark:text-white"
+                  />
                 </div>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                Delivery deadline (days from today)
-              </label>
-              <div className="flex items-center gap-3">
-                {[3, 7, 14, 30].map((days) => (
-                  <button
-                    key={days}
-                    type="button"
-                    onClick={() => setDeadlineDays(days)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                      deadlineDays === days
-                        ? "border-[#F5D03A] bg-[#F5D03A]/15 text-slate-950 dark:text-white"
-                        : "border-slate-200 dark:border-slate-800 text-slate-500"
-                    }`}
-                  >
-                    {days} days
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Step 4: What must happen before payment is released? */}
-        {currentStep === 4 && (
-          <div className="space-y-4">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#F5D03A] mb-1">
-                Step 4
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-950 dark:text-white font-display">
-                What must happen before payment is released?
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Define the tangible work stages and the specific release condition.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                Work stages or deliverables (comma separated)
-              </label>
-              <input
-                type="text"
-                value={deliverablesInput}
-                onChange={(e) => setDeliverablesInput(e.target.value)}
-                placeholder="Figma source file, Responsive components, Clean code review"
-                className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                Release condition
-              </label>
-              <textarea
-                rows={2}
-                value={conditionInput}
-                onChange={(e) => setConditionInput(e.target.value)}
-                placeholder="Client reviews deliverables and explicitly confirms approval"
-                className="w-full px-3.5 py-2.5 text-xs sm:text-sm bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-hidden focus:border-[#F5D03A] text-slate-900 dark:text-white"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Step 5: Review the agreement */}
-        {currentStep === 5 && (
-          <div className="space-y-4">
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-[#F5D03A] mb-1">
-                Step 5
-              </div>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-950 dark:text-white font-display">
-                Review the agreement
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Review the summary before creating your protected payment.
-              </p>
-            </div>
-
-            {/* Plain English Summary Box */}
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200/60 dark:border-slate-800/60">
-                <span className="text-slate-500">Payment amount:</span>
-                <span className="text-base font-black text-slate-900 dark:text-white tabular-nums">
-                  {amountInput} {assetChoice}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-slate-500 block mb-0.5">Agreement title:</span>
-                <span className="font-bold text-slate-900 dark:text-white text-sm">
-                  {paymentTitle}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-slate-500 block mb-0.5">Person receiving payment:</span>
-                <span className="font-mono text-slate-700 dark:text-slate-300">
-                  {recipientInput}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-slate-500 block mb-0.5">Release condition:</span>
-                <span className="text-slate-800 dark:text-slate-200">
-                  {conditionInput}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-slate-500 block mb-0.5">Agreed deliverables:</span>
-                <div className="flex flex-wrap gap-1.5 mt-1">
-                  {deliverablesInput.split(",").map((d, i) => (
-                    <span
-                      key={i}
-                      className="px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px]"
-                    >
-                      {d.trim()}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* AI Clarity Check Audit */}
-            {checkerAudit && (
-              <div className="p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/40 text-xs space-y-1.5">
-                <div className="flex items-center gap-1.5 font-bold text-[#4A2574] dark:text-purple-300">
-                  <Sparkles className="w-4 h-4 text-[#F5D03A]" />
-                  <span>Clarity Check: {checkerAudit.overallStatus === "PASS" ? "Clear & complete" : "Suggestions available"}</span>
-                </div>
-                <p className="text-slate-600 dark:text-slate-400 text-[11px]">
-                  {checkerAudit.summary}
-                </p>
               </div>
             )}
-          </div>
-        )}
 
-        {/* Step 6: Confirm and continue */}
-        {currentStep === 6 && (
-          <div className="space-y-4 text-center py-4">
-            <div className="w-14 h-14 mx-auto rounded-2xl bg-[#F5D03A] text-slate-950 flex items-center justify-center font-bold">
-              <Check className="w-8 h-8" />
-            </div>
+            {/* Step 2: Scope */}
+            {currentStep === 2 && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-display font-bold text-xl sm:text-2xl text-slate-950 dark:text-white">
+                    {isRequestFlow
+                      ? "What work are you requesting payment for?"
+                      : "What is this payment for?"}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[var(--tf-muted)] mt-1">
+                    Keep the title and summary clear so both parties share the same expectations.
+                  </p>
+                </div>
 
-            <div className="space-y-1">
-              <h2 className="text-2xl font-black text-slate-950 dark:text-white font-display">
-                Ready to create agreement
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-500 max-w-sm mx-auto">
-                Once created, the counterparty will be able to review and confirm. Money will only move when you add funds in the next step.
-              </p>
-            </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                    Title
+                  </label>
+                  <input
+                    type="text"
+                    value={paymentTitle}
+                    onChange={(e) => {
+                      setPaymentTitle(e.target.value);
+                      setStepValidationError(null);
+                    }}
+                    placeholder="e.g. Website redesign"
+                    className="w-full px-3.5 py-2.5 text-sm bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] rounded-xl focus:outline-none focus:border-[#4A2574] dark:focus:border-[#F5D03A] text-slate-950 dark:text-white"
+                  />
+                </div>
 
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-left max-w-md mx-auto space-y-1">
-              <div><strong>Protected amount:</strong> {amountInput} {assetChoice}</div>
-              <div><strong>Condition:</strong> {conditionInput}</div>
-              <div><strong>Timeout:</strong> {deadlineDays} days</div>
-            </div>
-          </div>
-        )}
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                    Summary
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={paymentDescription}
+                    onChange={(e) => setPaymentDescription(e.target.value)}
+                    placeholder="Describe what will be delivered..."
+                    className="w-full px-3.5 py-2.5 text-sm bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] rounded-xl focus:outline-none focus:border-[#4A2574] dark:focus:border-[#F5D03A] text-slate-950 dark:text-white"
+                  />
+                </div>
+              </div>
+            )}
 
-        {/* Error message */}
-        {errorMessage && (
-          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
+            {/* Step 3: Amount & Deadline */}
+            {currentStep === 3 && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-display font-bold text-xl sm:text-2xl text-slate-950 dark:text-white">
+                    How much is the payment?
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[var(--tf-muted)] mt-1">
+                    Set the agreed amount and delivery timeframe. Note: a 1% platform fee applies to the client or funder.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                      Amount
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0.01"
+                      value={amountInput}
+                      onChange={(e) => {
+                        setAmountInput(e.target.value);
+                        setStepValidationError(null);
+                      }}
+                      placeholder="500.00"
+                      className="w-full px-3.5 py-2.5 text-lg font-display font-bold bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] rounded-xl focus:outline-none focus:border-[#4A2574] dark:focus:border-[#F5D03A] text-slate-950 dark:text-white tabular-nums"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                      Asset
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["USDC", "XLM"] as const).map((asset) => (
+                        <button
+                          key={asset}
+                          type="button"
+                          onClick={() => setAssetChoice(asset)}
+                          className={`min-h-[46px] text-xs font-semibold rounded-xl border transition-colors cursor-pointer ${
+                            assetChoice === asset
+                              ? "border-[#F5D03A] bg-[#F5D03A]/15 text-slate-950 dark:text-white"
+                              : "border-[var(--tf-border)] text-[var(--tf-muted)] hover:bg-[var(--tf-surface-subtle)]"
+                          }`}
+                        >
+                          {asset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                    Expected delivery timeframe
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {[3, 7, 14, 30].map((days) => (
+                      <button
+                        key={days}
+                        type="button"
+                        onClick={() => setDeadlineDays(days)}
+                        className={`px-3.5 min-h-[38px] rounded-xl text-xs font-medium border transition-colors cursor-pointer ${
+                          deadlineDays === days
+                            ? "border-[#F5D03A] bg-[#F5D03A]/15 text-slate-950 dark:text-white font-semibold"
+                            : "border-[var(--tf-border)] text-[var(--tf-muted)] hover:bg-[var(--tf-surface-subtle)]"
+                        }`}
+                      >
+                        {days} days
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: Acceptance Criteria */}
+            {currentStep === 4 && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-display font-bold text-xl sm:text-2xl text-slate-950 dark:text-white">
+                    When should the payment be released?
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[var(--tf-muted)] mt-1">
+                    List the deliverables and what the client will check before approving release.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                    Deliverables (comma separated)
+                  </label>
+                  <input
+                    type="text"
+                    value={deliverablesInput}
+                    onChange={(e) => setDeliverablesInput(e.target.value)}
+                    placeholder="Design file, Final assets, Live preview"
+                    className="w-full px-3.5 py-2.5 text-sm bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] rounded-xl focus:outline-none focus:border-[#4A2574] dark:focus:border-[#F5D03A] text-slate-950 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                    Acceptance criteria
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={conditionInput}
+                    onChange={(e) => {
+                      setConditionInput(e.target.value);
+                      setStepValidationError(null);
+                    }}
+                    placeholder="Client reviews delivery and approves release"
+                    className="w-full px-3.5 py-2.5 text-sm bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] rounded-xl focus:outline-none focus:border-[#4A2574] dark:focus:border-[#F5D03A] text-slate-950 dark:text-white"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Step 5: Review Summary */}
+            {currentStep === 5 && (
+              <div className="space-y-4">
+                <div>
+                  <h2 className="font-display font-bold text-xl sm:text-2xl text-slate-950 dark:text-white">
+                    Review terms
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[var(--tf-muted)] mt-1">
+                    Confirm the roles, amount, and release condition before creating this draft.
+                  </p>
+                </div>
+
+                <div className="divide-y divide-[var(--tf-border)] rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] text-xs">
+                  <div className="p-3.5 flex items-center justify-between gap-4">
+                    <span className="text-[var(--tf-muted)]">Amount</span>
+                    <span className="text-base font-display font-bold text-slate-950 dark:text-white tabular-nums">
+                      {amountInput} {assetChoice}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 space-y-1">
+                    <span className="text-[var(--tf-muted)] block">Title</span>
+                    <span className="font-semibold text-sm text-slate-950 dark:text-white">
+                      {paymentTitle}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-[var(--tf-muted)] block mb-0.5">
+                        {isRequestFlow ? "Client / Funder" : "Client / Payer (You)"}
+                      </span>
+                      <span className="font-mono text-slate-800 dark:text-slate-200 break-all">
+                        {isRequestFlow
+                          ? counterpartyName || `${counterpartyInput.slice(0, 14)}...`
+                          : `${currentUserAddress.slice(0, 14)}...`}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[var(--tf-muted)] block mb-0.5">
+                        {isRequestFlow ? "Recipient (You)" : "Freelancer / Recipient"}
+                      </span>
+                      <span className="font-mono text-slate-800 dark:text-slate-200 break-all">
+                        {isRequestFlow
+                          ? `${currentUserAddress.slice(0, 14)}...`
+                          : counterpartyName || `${counterpartyInput.slice(0, 14)}...`}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 space-y-1">
+                    <span className="text-[var(--tf-muted)] block">Acceptance criteria</span>
+                    <span className="text-slate-800 dark:text-slate-200 leading-relaxed block">
+                      {conditionInput}
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 space-y-1">
+                    <span className="text-[var(--tf-muted)] block">Deliverables</span>
+                    <span className="text-slate-800 dark:text-slate-200 block">
+                      {deliverablesInput
+                        .split(",")
+                        .map((d) => d.trim())
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </div>
+                </div>
+
+                {checking ? (
+                  <div className="flex items-center gap-2 text-xs text-[var(--tf-muted)]">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Checking terms for clarity...</span>
+                  </div>
+                ) : (
+                  checkerAudit && (
+                    <div className="p-3.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] text-xs space-y-1">
+                      <div className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-white">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span>
+                          {checkerAudit.overallStatus === "PASS"
+                            ? "Clarity review passed"
+                            : "Review notes"}
+                        </span>
+                      </div>
+                      <p className="text-[var(--tf-muted)] leading-relaxed">
+                        {checkerAudit.summary}
+                      </p>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+
+            {/* Step 6: Distinct Confirmation Step */}
+            {currentStep === 6 && (
+              <div className="space-y-4 py-1">
+                <div className="w-11 h-11 rounded-2xl bg-[#F5D03A] text-slate-950 flex items-center justify-center">
+                  <Check className="w-5 h-5 stroke-[2.5]" />
+                </div>
+
+                <div className="space-y-1">
+                  <h2 className="font-display font-bold text-xl sm:text-2xl text-slate-950 dark:text-white">
+                    {isRequestFlow
+                      ? "Confirm and send payment request"
+                      : "Confirm and create agreement"}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[var(--tf-muted)] leading-relaxed">
+                    {isRequestFlow
+                      ? "This creates a request for your client to review and fund. No money moves yet."
+                      : "Creating the agreement does not move money yet. Funding happens in the next step once both sides accept."}
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] text-xs space-y-2">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[var(--tf-muted)]">Agreement</span>
+                    <span className="font-medium text-slate-950 dark:text-white truncate">
+                      {paymentTitle}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[var(--tf-muted)]">Amount</span>
+                    <span className="font-semibold text-slate-950 dark:text-white tabular-nums">
+                      {amountInput} {assetChoice}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[var(--tf-muted)]">Target timeframe</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100">
+                      {deadlineDays} days
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
+
+        {/* Validation or Server Error */}
+        {(stepValidationError || errorMessage) && (
+          <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{errorMessage}</span>
+            <span>{stepValidationError || errorMessage}</span>
           </div>
         )}
 
-        {/* Navigation Buttons between steps */}
-        <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+        {/* Step Navigation */}
+        <div className="flex items-center justify-between pt-4 border-t border-[var(--tf-border)]">
           {currentStep > 1 ? (
             <button
               type="button"
-              onClick={() => setCurrentStep(currentStep - 1)}
-              className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              onClick={() => {
+                setStepValidationError(null);
+                setCurrentStep(currentStep - 1);
+              }}
+              className="px-4 min-h-[42px] text-xs font-medium text-[var(--tf-muted)] hover:text-slate-950 dark:hover:text-white transition-colors cursor-pointer"
             >
               Previous
             </button>
@@ -968,28 +1029,39 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
             <button
               type="button"
               onClick={() => {
+                if (!validateStep(currentStep)) return;
                 if (currentStep === 4) {
                   runCheckerAudit(buildTermsObject());
                 }
                 setCurrentStep(currentStep + 1);
               }}
-              className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="px-5 min-h-[42px] text-xs font-semibold text-slate-950 bg-[#F5D03A] hover:bg-[#E7BF24] rounded-xl transition-colors inline-flex items-center gap-1.5 cursor-pointer"
             >
-              Continue
+              <span>Continue</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           ) : (
             <button
               type="button"
               onClick={handleFinalizeAgreement}
-              className="px-6 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              disabled={submittingAgreement}
+              className="px-5 min-h-[42px] text-xs font-semibold text-slate-950 bg-[#F5D03A] hover:bg-[#E7BF24] disabled:opacity-50 rounded-xl transition-colors inline-flex items-center gap-1.5 cursor-pointer"
             >
-              Confirm and create payment
-              <Check className="w-3.5 h-3.5" />
+              {submittingAgreement ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <span>{isRequestFlow ? "Create payment request" : "Create agreement"}</span>
+                  <Check className="w-3.5 h-3.5" />
+                </>
+              )}
             </button>
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 };

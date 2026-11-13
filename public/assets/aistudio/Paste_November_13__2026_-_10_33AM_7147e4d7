@@ -1,0 +1,827 @@
+# TRUSTFLOW — COMPLETE UI/UX SIMPLIFICATION & VISUAL OVERHAUL
+
+## ROLE
+
+Act as a senior product designer, UX architect, and frontend engineer specialising in premium, minimal fintech applications.
+
+Your task is to carry out a complete visual and user-experience overhaul of the existing TrustFlow application.
+
+This is a redesign of an existing working project, not a request to build a new application.
+
+The objective is to make TrustFlow feel simple, polished, intuitive, and trustworthy. A first-time user should understand what the product does and how to get started without reading lengthy explanations or learning blockchain terminology.
+
+**Do not work on backend functionality, API integrations, smart contracts, wallet architecture, or payment execution in this task.** Preserve the existing implementation and concentrate on the visual experience, page structure, navigation, responsive behaviour, and frontend presentation.
+
+---
+
+# 1. PRODUCT POSITIONING
+
+TrustFlow is a protected payment platform.
+
+Its primary audience is:
+
+- Freelancers who work with international clients and need a reliable way to receive payment.
+- Clients and individuals who want to pay for services without worrying about paying before work is delivered.
+- Everyday people who want to make purchases or payments under agreed conditions.
+
+However, the primary positioning and landing-page messaging must focus on freelancers and their clients.
+
+The central problem is simple:
+
+People want to work together, but neither party wants to take unnecessary payment risks.
+
+TrustFlow helps both parties agree on the work, reserve the payment, and release the money when the agreed work is approved.
+
+### Communication rules
+
+Use ordinary, everyday language.
+
+Avoid:
+- Blockchain terminology.
+- Smart contract terminology.
+- Escrow protocol terminology.
+- Technical explanations of how funds are locked.
+- AI-generated marketing clichés.
+- Excessive descriptions of security architecture.
+- Repetitive statements explaining the same benefit.
+- Unnecessary emojis and decorative symbols.
+
+Never assume users understand how escrow works.
+
+Explain the product through familiar actions: agree, pay, deliver, approve.
+
+The interface should communicate confidence without overwhelming users with information.
+
+---
+
+# 2. OVERALL DESIGN DIRECTION
+
+Use ChatGPT's product interface as inspiration for its simplicity, spacing, restrained visual hierarchy, and conversational interaction model.
+
+Do not copy ChatGPT's branding or reproduce its interface exactly.
+
+Create a distinctive TrustFlow visual identity.
+
+The application should feel like a premium fintech product, not a generic AI dashboard or blockchain administration panel.
+
+### Design characteristics
+
+- Minimal and uncluttered.
+- Spacious but not wasteful.
+- Clear typography and visual hierarchy.
+- Carefully controlled use of colour.
+- Rounded surfaces with consistent proportions.
+- Subtle glass effects where appropriate.
+- Smooth page transitions.
+- Beautiful hover and press interactions.
+- Small, purposeful animated details.
+- Consistent spacing across all pages.
+- Mobile-first without compromising desktop quality.
+
+Use the existing brand identity where appropriate. Maintain visual consistency with the existing TrustFlow assets and colours unless the design reference already established in the project provides a better direction.
+
+Avoid:
+- Excessive cards inside cards.
+- Unnecessary borders around every element.
+- Too many badges and pills.
+- Giant buttons.
+- Repeated headings.
+- Decorative statistics that don't help users.
+- Oversized empty spaces.
+- Generic AI-generated gradient backgrounds.
+- Excessive floating elements.
+
+The interface should feel deliberately designed, not assembled from a collection of UI components.
+
+---
+
+# 3. LANDING PAGE REDESIGN
+
+The landing page currently contains too much information, too many sections, and too many repeated calls to action.
+
+Rebuild the hierarchy to make the page short, clear, and compelling.
+
+## A. Header
+
+Completely simplify the header.
+
+Desktop and mobile should follow the same design principles.
+
+**Left side:**
+- TrustFlow logo.
+- Text: TrustFlow.
+
+The logo and brand name should act as a home button.
+
+**Right side:**
+- Light/dark theme toggle.
+
+Remove:
+- Sign in from the header.
+- Get Started from the header.
+- The additional "Protected Payments" brand descriptor.
+- Any redundant navigation links.
+
+The theme toggle should be compact and visually refined.
+
+Do not allow the header to consume unnecessary vertical space, particularly on mobile.
+
+## B. Hero section
+
+This is the most important part of the landing page.
+
+It should immediately communicate what TrustFlow does for freelancers and clients.
+
+Use this messaging as the starting direction:
+
+**Small introductory label:**
+
+Payments for freelance work.
+
+**Main headline:**
+
+Get paid for your work. Without the payment stress.
+
+**Supporting text:**
+
+Agree on the work, secure the payment, and get paid when your client approves the delivery.
+
+Keep the supporting text short and readable.
+
+Do not add another paragraph explaining escrow.
+
+### Hero actions
+
+Use two actions:
+
+1. **Get started** — primary action.
+2. **How it works** — secondary action.
+
+The primary button should take the user into the existing authentication flow.
+
+A user should be able to sign in or create an account from that flow. Do not create a separate onboarding system.
+
+The secondary action should smoothly scroll to the short explanation section.
+
+### Button proportions
+
+The two actions should have balanced dimensions.
+
+On mobile:
+- They must not stretch unnecessarily across the entire screen.
+- They should sit comfortably within the content margins.
+- They should not create horizontal overflow.
+- Their height and spacing should feel appropriate for touch interaction.
+
+Do not display another oversized "Go to workspace" button.
+
+There should be one clear primary action on the landing page.
+
+## C. Hero visual treatment
+
+The hero should have a premium visual identity without requiring a large, complicated illustration.
+
+Use a restrained animated visual that communicates a successful freelance payment agreement.
+
+Possible visual elements:
+- A compact agreement preview.
+- A subtle payment status indicator.
+- A small animated progress line.
+- A gentle movement from "Work submitted" to "Payment approved".
+
+Keep the visual secondary to the headline.
+
+Avoid a giant dashboard screenshot or complicated floating UI mockups.
+
+## D. How it works
+
+Keep this section extremely short.
+
+Title:
+
+**Getting paid should be simple.**
+
+Use three compact steps:
+
+**01 — Agree**
+
+You and your client agree on the work, price, and delivery terms.
+
+**02 — Secure**
+
+Your client puts the agreed payment aside.
+
+**03 — Get paid**
+
+Once the work is approved, the payment is released.
+
+Display these steps in a compact, visually attractive arrangement.
+
+On desktop, use a horizontal layout.
+
+On mobile, use a compact vertical arrangement with minimal spacing.
+
+Do not turn each step into a large independent card.
+
+## E. Remove unnecessary landing-page sections
+
+Remove the following from the current landing page:
+
+- "Protected Payments at a Glance".
+- The 100% protected reservation statistic.
+- The 3 Steps statistic.
+- The 2-Party dual agreement statistic.
+- The separate "Three simple ways to use TrustFlow" section.
+- The lengthy descriptions of buying and conditional disbursements.
+- The "Built with mathematical certainty" section.
+- Repeated calls to create a protected payment.
+- Repeated explanations of the central product promise.
+- Any unnecessary technical or promotional content.
+
+The other two product use cases must not be deleted from the product's overall capabilities. They simply should not compete with the freelancer-focused message on the landing page.
+
+## F. Footer
+
+Create a very small, clean footer.
+
+It should contain:
+- TrustFlow logo and name.
+- A short description, if necessary.
+- How it works.
+- A link to the application's main entry point.
+- An appropriate copyright line.
+
+Remove redundant navigation and repeated marketing copy.
+
+Do not display long technical disclaimers in the main footer.
+
+If the application is operating on Testnet, retain an unobtrusive development/test-network notice where appropriate. It must not dominate the page.
+
+### Landing page length
+
+The landing page should be considerably shorter than its current version.
+
+A visitor should be able to understand the product, see the three-step process, and reach the sign-in flow without scrolling through a long marketing website.
+
+---
+
+# 4. APPLICATION NAVIGATION REDESIGN
+
+The authenticated application currently has too much branding and navigation occupying the available screen space.
+
+Redesign the application header.
+
+## Header structure
+
+**Top left:**
+- Display the TrustFlow logo only.
+- Do not write "TrustFlow" beside the logo.
+- The logo should be clickable and take the user back to the landing page.
+
+**Top right:**
+- A compact navigation/menu toggle.
+- A separate light/dark theme toggle.
+
+Remove the repeated TrustFlow wordmark from the authenticated header.
+
+Remove unnecessary profile buttons and duplicated account controls.
+
+The navigation toggle should be the primary way to access the application's different sections.
+
+## Navigation menu
+
+When the user activates the menu toggle, display a polished navigation panel.
+
+The menu should contain:
+
+1. Workspace.
+2. My payments.
+3. In progress.
+4. Completed.
+5. Account and balance details.
+
+Each item should have:
+- A simple, recognisable icon.
+- A clear label.
+- A subtle active state.
+- Appropriate hover and press feedback.
+
+Make the panel feel premium and carefully designed.
+
+On mobile, use a smooth slide-in drawer or similarly compact navigation surface.
+
+On desktop, use a refined dropdown or side panel that does not cover unnecessary portions of the screen.
+
+The panel must close when:
+- A navigation item is selected.
+- The user clicks outside the panel.
+- The user activates the close control.
+
+Do not create a large navigation overlay that takes over the entire experience unnecessarily.
+
+## Account and balance details
+
+Selecting Account and balance details should open the existing account/profile interface.
+
+Preserve its current account information and balance details.
+
+Present it in a polished modal or glass-style overlay with:
+- User information.
+- Stellar account address.
+- Copy-address action.
+- Available balances.
+- Existing account actions.
+
+Keep the information that users actually need.
+
+Do not expose private keys, secret credentials, or sensitive authentication information.
+
+Do not duplicate the account information elsewhere in the header.
+
+---
+
+# 5. WORKSPACE — COMPLETE SIMPLIFICATION
+
+This is the most important part of the authenticated application.
+
+The current workspace feels too much like a dashboard. It contains too many actions, headings, cards, suggestions, and repeated descriptions.
+
+I want the workspace to feel like a simple conversational interface.
+
+Take inspiration from ChatGPT's mobile experience: one clear working area, a conversational input, and useful shortcuts.
+
+Do not reproduce ChatGPT's branding.
+
+## A. One-screen workspace
+
+The workspace should be designed to fit within the available viewport.
+
+On mobile, the user should not need to scroll through a long dashboard to reach the main payment input.
+
+Use the available screen space intelligently.
+
+The workspace should contain:
+
+1. A small greeting or contextual heading.
+2. Four compact action shortcuts.
+3. One prominent conversational input.
+4. A small amount of helpful contextual guidance.
+
+Nothing else should compete with the main input.
+
+## B. Remove duplicate dashboard actions
+
+The current workspace has repeated actions such as:
+- Create payment.
+- Pay someone.
+- Request payment.
+- View activity.
+- Create a new payment again.
+- New payments.
+- Reserve balance.
+- What should I do next?
+
+Simplify these into four shortcuts:
+
+**1. Create payment**
+
+For someone who wants to set up a new protected payment.
+
+**2. Pay someone**
+
+For someone who wants to pay another person under agreed conditions.
+
+**3. Request payment**
+
+For a freelancer or recipient who wants to send a payment request to a client.
+
+**4. View activity**
+
+For someone who wants to review their existing payment activity.
+
+These should be compact icon-based shortcuts above the input field.
+
+Use a consistent icon family.
+
+Do not create four oversized cards.
+
+The shortcuts should be easy to tap on mobile and should fit neatly within the available workspace width.
+
+## C. Conversational payment input
+
+Place one prominent input area beneath the four shortcuts.
+
+Use a simple placeholder:
+
+**What would you like to do?**
+
+A smaller optional hint can say:
+
+"Describe the payment or agreement you want to create."
+
+The input should feel familiar and conversational.
+
+It should:
+- Have comfortable internal spacing.
+- Support multiline text.
+- Expand naturally when the user types.
+- Have a clearly visible send action.
+- Work comfortably on mobile keyboards.
+- Remain visually anchored to the workspace.
+- Avoid unnecessary decorative icons.
+
+Remove the existing AI-themed decoration, including:
+- Unnecessary stars.
+- Decorative circles.
+- Excessive sparkles.
+- "Powered by Gemini".
+- Generic AI assistant labels.
+- Repeated descriptions explaining that users can type in plain English.
+
+The AI functionality is already part of the product. Users do not need to be constantly reminded of the technology behind it.
+
+Do not change the existing AI implementation.
+
+## D. Contextual interaction
+
+The four shortcuts should remain connected to the existing application flows.
+
+When a user selects a shortcut, it should take them into the relevant existing flow or prepare the appropriate conversational action.
+
+Do not implement fake functionality or create new backend processes.
+
+The workspace should remain a single, focused starting point rather than a dashboard full of separate workflows.
+
+## E. Workspace visual hierarchy
+
+The visual hierarchy should be:
+
+1. Greeting.
+2. Four action shortcuts.
+3. Conversational input.
+
+Keep everything else secondary.
+
+Remove:
+- Excessive dashboard cards.
+- Repeated payment creation buttons.
+- Unnecessary balance summaries.
+- Large introductory descriptions.
+- Redundant AI branding.
+- Long lists of suggested actions.
+- Large sections that require scrolling.
+- Decorative dashboard widgets that do not help the user complete a payment.
+
+Account balances and account information should remain accessible through the navigation menu.
+
+Payment activity should remain accessible through My payments and View activity.
+
+---
+
+# 6. PAYMENT AND AGREEMENT SCREENS
+
+Do not redesign the underlying payment process or remove any existing functionality.
+
+However, simplify the visual presentation of existing payment and agreement screens.
+
+The same design philosophy must apply throughout the application.
+
+### Design requirements
+
+- One clear heading per screen.
+- Short, understandable field labels.
+- Helpful placeholder text.
+- Minimal explanations.
+- Consistent form spacing.
+- Clearly visible primary action.
+- Secondary actions should be visually quieter.
+- Avoid unnecessary cards and nested panels.
+- Use simple language rather than technical terminology.
+
+Users should be able to understand:
+- Who they are paying.
+- Who will receive the money.
+- How much is involved.
+- What the payment is for.
+- What must happen before the money is released.
+
+Use progressive disclosure.
+
+Do not show every possible explanation, technical detail, or advanced setting immediately.
+
+Present important information when the user needs it.
+
+For example, instead of presenting a long technical explanation of payment protection, show a short explanation beside the relevant action.
+
+Preserve existing validation and form behaviour.
+
+---
+
+# 7. TYPOGRAPHY AND CONTENT SYSTEM
+
+Review all visible text throughout the application.
+
+Remove redundant headings, repeated explanations, technical jargon, and generic AI copy.
+
+Use concise, human language.
+
+Preferred language:
+
+| Avoid | Use instead |
+|---|---|
+| Escrow protocol | Protected payment |
+| Deploy escrow | Create payment agreement |
+| Fund escrow | Add money |
+| Beneficiary | Person receiving payment |
+| Milestone | Work stage |
+| Disbursement | Release payment |
+| On-chain transaction | Payment record |
+| Transaction hash | Transaction reference |
+| Smart contract | Payment protection |
+| Describe in plain words | What would you like to do? |
+
+Do not force these replacements where they would make a particular screen confusing.
+
+Keep technical information in existing advanced or transaction-detail areas where it is genuinely necessary.
+
+Use a clear typographic system:
+- Strong but restrained headings.
+- Readable body text.
+- Comfortable line height.
+- Consistent font weights.
+- No unnecessary uppercase labels.
+- Avoid excessive bold text.
+
+Every visible sentence should earn its place on the screen.
+
+---
+
+# 8. PREMIUM ANIMATION AND INTERACTION SYSTEM
+
+The current experience feels too static and does not have the level of polish expected from a modern fintech product.
+
+Introduce a consistent animation system across the landing page and authenticated application.
+
+The animations should feel intentional, fluid, and premium.
+
+They should not make the product feel like a toy.
+
+## Landing page animations
+
+Introduce:
+- Gentle hero-content entrance animation.
+- Subtle looping movement in the hero visual.
+- Small floating or bouncing details.
+- Smooth animated progress indicators.
+- Soft hover transitions on buttons.
+- Subtle movement when the user scrolls into a section.
+
+The hero visual can have a small looping payment-progress animation that communicates the movement from agreement to approval.
+
+## Workspace animations
+
+Introduce:
+- Smooth appearance of the workspace.
+- Subtle hover and press interactions on shortcuts.
+- Smooth expansion of the conversational input.
+- Gentle transitions when moving between workspace states.
+- Small loading animations where existing actions require them.
+- Smooth navigation drawer transitions.
+- Polished modal appearance and dismissal.
+
+## Navigation animations
+
+The navigation menu should:
+- Open smoothly.
+- Have a refined transition.
+- Give immediate feedback when an item is selected.
+- Close naturally without abrupt movement.
+
+## Motion quality
+
+Use restrained spring-like movement where appropriate.
+
+Small bouncing or floating motions are welcome, but do not make every element move constantly.
+
+Create a consistent motion language.
+
+Avoid:
+- Excessive shaking.
+- Random animations.
+- Large bouncing buttons.
+- Constant movement that distracts from reading.
+- Animations that delay user interaction.
+
+Animations must not interfere with accessibility.
+
+Respect `prefers-reduced-motion` and provide appropriate reduced-motion behaviour.
+
+---
+
+# 9. LIGHT AND DARK THEMES
+
+Preserve the existing theme functionality.
+
+Redesign both themes so that they feel like two intentional versions of the same product.
+
+### Light theme
+
+Use:
+- Clean, soft backgrounds.
+- Clear text contrast.
+- Restrained surfaces.
+- Subtle borders and shadows.
+- Carefully selected accent colours.
+
+### Dark theme
+
+Use:
+- Deep, comfortable backgrounds.
+- Clear text contrast.
+- Restrained surface separation.
+- Subtle highlights.
+- Consistent accent colours.
+
+Do not simply invert colours.
+
+Review every major screen, modal, menu, form, and interactive state in both themes.
+
+Ensure that:
+- Text remains readable.
+- Icons remain visible.
+- Input fields remain distinguishable.
+- Menus and overlays feel consistent.
+- Hover and active states work properly.
+
+---
+
+# 10. RESPONSIVE DESIGN — MOBILE FIRST, DESKTOP EXCELLENT
+
+The redesign must work beautifully on both mobile and desktop.
+
+Mobile is the priority for interaction design, but this is not a mobile-only product.
+
+Do not simply shrink the desktop interface.
+
+Reorganise elements intelligently for smaller screens.
+
+### Mobile requirements
+
+- Compact header.
+- Logo at the far left.
+- Navigation toggle and theme toggle at the far right.
+- Proper content margins.
+- No horizontal scrolling.
+- No oversized buttons.
+- No unnecessary vertical spacing.
+- Workspace fits within the available viewport as much as possible.
+- Four action shortcuts remain accessible.
+- Conversational input is easy to reach.
+- Navigation drawer works smoothly.
+- Modals fit within the screen.
+- No content should be hidden behind fixed elements.
+- The mobile keyboard must not obscure the active input or send action.
+
+### Desktop requirements
+
+- Use a centred content layout with a sensible maximum width.
+- Avoid stretching content across the entire screen.
+- Maintain balanced spacing.
+- Give the hero section a deliberate composition.
+- Keep the workspace focused and compact.
+- Do not turn the mobile layout into an unnecessarily wide dashboard.
+
+Test the application at:
+- Small mobile widths.
+- Standard mobile widths.
+- Tablet widths.
+- Laptop screens.
+- Large desktop screens.
+
+Pay particular attention to the mobile workspace and landing-page hero.
+
+---
+
+# 11. PRESERVE EXISTING FUNCTIONALITY
+
+This is a visual overhaul, not a backend redevelopment.
+
+Before editing, inspect the existing project structure and identify the components responsible for:
+
+- Landing page.
+- Application header.
+- Navigation.
+- Workspace.
+- Payment creation.
+- Payment requests.
+- Payment activity.
+- Account/profile interface.
+- Theme management.
+- Existing modals and overlays.
+
+Then redesign the presentation using the existing architecture.
+
+### Strict preservation requirements
+
+Do not:
+- Replace the existing authentication system.
+- Rebuild the Privy/Pollar integration.
+- Modify wallet provisioning.
+- Change wallet signing.
+- Change Stellar configuration.
+- Change Trustless Work integration.
+- Modify API endpoints.
+- Rewrite the Gemini agreement builder.
+- Replace existing payment flows with mock interactions.
+- Change database structures.
+- Delete existing payment functionality.
+- Introduce a new payment engine.
+- Remove working functionality simply because its current UI is being simplified.
+
+Keep the existing application state and interactions connected to the redesigned interface.
+
+If an existing feature is moved into a menu or simplified visually, preserve its underlying behaviour.
+
+Do not create duplicate navigation systems.
+
+Do not introduce unnecessary dependencies.
+
+---
+
+# 12. IMPLEMENTATION AND QUALITY CHECKS
+
+Work directly in the existing project.
+
+First inspect the current implementation, then create a clear redesign plan and apply the changes.
+
+Do not stop after redesigning only the landing page.
+
+The overhaul must cover:
+- Landing page.
+- Auth screens.
+- Application header.
+- Navigation menu.
+- Workspace.
+- Payment screens.
+- Agreement screens.
+- Payment activity.
+- Account/profile interface.
+- Light and dark themes.
+- Mobile and desktop layouts.
+
+After implementation:
+
+1. Run the production build.
+2. Run the existing TypeScript checks.
+3. Fix any errors introduced by the redesign.
+4. Test navigation between the landing page and workspace.
+5. Test the existing authentication entry points.
+6. Check that the four workspace shortcuts still connect to their existing actions.
+7. Check that the account menu opens correctly.
+8. Check the theme toggle.
+9. Check all major screens in mobile and desktop layouts.
+10. Check for horizontal overflow and unnecessary vertical scrolling.
+11. Check that existing forms and interactions have not been disconnected.
+
+Do not claim that payment execution, authentication, or blockchain functionality has been verified merely because the redesigned frontend compiles.
+
+---
+
+# 13. FINAL DESIGN PRINCIPLE
+
+The finished product should communicate one simple idea:
+
+**TrustFlow helps freelancers get paid with confidence and helps clients pay with confidence.**
+
+A user should not need to understand blockchain, smart contracts, or escrow infrastructure to use the application.
+
+They should only need to understand:
+
+- What they want to pay for.
+- Who they are paying.
+- What has been agreed.
+- When the money should be released.
+
+The landing page should be short.
+
+The workspace should be focused.
+
+The navigation should be simple.
+
+The payment process should be understandable.
+
+The animations should feel premium.
+
+The entire experience should feel like one coherent product.
+
+**Do not add more features, sections, dashboards, explanations, or decorative elements. The objective is to remove unnecessary complexity, not introduce new complexity.**
+
+At the end, provide a concise implementation report covering:
+- Pages and components redesigned.
+- Existing functionality preserved.
+- Responsive improvements made.
+- Animation and theme improvements.
+- Build and TypeScript check results.
+- Any visual issues or existing functionality problems discovered but deliberately left untouched because this task is limited to the UI overhaul.
+
+Also report which AI model/provider the existing application is configured to call, based only on the configuration and code you can actually inspect. Do not guess, and do not change the AI provider as part of this task.

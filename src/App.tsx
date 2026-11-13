@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { MotionConfig } from "motion/react";
 import { LandingPage } from "./components/LandingPage";
 import { NavigationShell } from "./components/NavigationShell";
 import { ConversationalWorkspace } from "./components/ConversationalWorkspace";
@@ -26,12 +27,18 @@ function TrustFlowMain() {
     useState<AgreementRecord | null>(null);
   const [workspaceInitialType, setWorkspaceInitialType] =
     useState<TransactionType>("WORK");
+  const [walletNotice, setWalletNotice] = useState<string | null>(null);
 
   const {
+    isAuthenticated,
+    openAuthModal,
+    closeAuthModal,
     effectiveAccount,
     setIsDemoSandbox,
     setSelectedDemoPersona,
   } = useAuth();
+
+  const prevAuthRef = useRef(isAuthenticated);
 
   // Sync dark theme class on documentElement
   useEffect(() => {
@@ -41,6 +48,16 @@ function TrustFlowMain() {
       document.documentElement.classList.remove("dark");
     }
   }, [isDark]);
+
+  // Automatically enter workspace when a user signs in from the landing page
+  useEffect(() => {
+    if (!prevAuthRef.current && isAuthenticated && !inApp) {
+      setInApp(true);
+      setActiveTab("workspace");
+      setSelectedAgreement(null);
+    }
+    prevAuthRef.current = isAuthenticated;
+  }, [isAuthenticated, inApp]);
 
   // Fetch agreements from Express server backend
   const fetchAgreements = async () => {
@@ -61,6 +78,7 @@ function TrustFlowMain() {
 
   // Connect authentic Freighter wallet (fallback)
   const handleConnectRealWallet = async () => {
+    setWalletNotice(null);
     try {
       const realAccount = await connectFreighterWallet();
       if (realAccount) {
@@ -68,7 +86,7 @@ function TrustFlowMain() {
         setIsDemoSandbox(false);
       }
     } catch (err: any) {
-      alert(err.message || "Failed to connect Freighter wallet.");
+      setWalletNotice(err.message || "Failed to connect Freighter wallet.");
     }
   };
 
@@ -95,81 +113,113 @@ function TrustFlowMain() {
     }
   };
 
-  // Launch app from landing page
+  // Launch app directly (used when authenticated or entering demo/app entry point)
   const handleLaunchApp = (type?: TransactionType) => {
     if (type) {
       setWorkspaceInitialType(type);
     }
     setInApp(true);
     setActiveTab("workspace");
+    setSelectedAgreement(null);
   };
 
-  // If visitor is on public landing page
-  if (!inApp) {
-    return <LandingPage onLaunch={handleLaunchApp} />;
-  }
+  // Primary landing action: take user to existing authentication flow, or workspace if already signed in
+  const handleGetStarted = () => {
+    if (isAuthenticated) {
+      handleLaunchApp("WORK");
+    } else {
+      openAuthModal();
+    }
+  };
+
+  // Continue in demo mode from AuthModal
+  const handleEnterDemo = () => {
+    closeAuthModal();
+    setIsDemoSandbox(true);
+    handleLaunchApp("WORK");
+  };
 
   return (
-    <NavigationShell
-      activeTab={activeTab}
-      onTabChange={(tab) => {
-        setSelectedAgreement(null);
-        setActiveTab(tab);
-      }}
-      currentAccount={effectiveAccount}
-      onAccountChange={handleAccountChange}
-      isSimulated={effectiveAccount.isSimulated}
-      onConnectRealWallet={handleConnectRealWallet}
-      isDark={isDark}
-      onToggleTheme={() => setIsDark(!isDark)}
-    >
-      {selectedAgreement ? (
-        <AgreementDetailRoom
-          agreement={selectedAgreement}
-          currentAccount={effectiveAccount}
-          onUpdateAgreement={handleUpdateAgreement}
-          onBack={() => setSelectedAgreement(null)}
-        />
-      ) : activeTab === "workspace" ? (
-        <ConversationalWorkspace
-          initialType={workspaceInitialType}
-          currentUserAddress={effectiveAccount.address}
-          agreements={agreements}
-          onSelectAgreement={(agr) => setSelectedAgreement(agr)}
-          onNavigateTab={(tab) => {
-            setSelectedAgreement(null);
-            setActiveTab(tab);
-          }}
-          onAgreementCreated={(newAgr) => {
-            setAgreements((prev) => [newAgr, ...prev]);
-            setSelectedAgreement(newAgr);
-          }}
+    <>
+      {!inApp ? (
+        <LandingPage
+          isDark={isDark}
+          onToggleTheme={() => setIsDark(!isDark)}
+          onGetStarted={handleGetStarted}
+          onOpenApp={() => handleLaunchApp()}
         />
       ) : (
-        <AgreementListView
-          agreements={agreements}
-          activeFilter={activeTab}
-          onFilterChange={(tab) => {
+        <NavigationShell
+          activeTab={activeTab}
+          onTabChange={(tab) => {
             setSelectedAgreement(null);
             setActiveTab(tab);
           }}
-          onSelectAgreement={(agr) => setSelectedAgreement(agr)}
-          onCreateNew={() => {
+          onReturnHome={() => {
             setSelectedAgreement(null);
-            setActiveTab("workspace");
+            setInApp(false);
           }}
-        />
+          currentAccount={effectiveAccount}
+          onAccountChange={handleAccountChange}
+          isSimulated={effectiveAccount.isSimulated}
+          onConnectRealWallet={handleConnectRealWallet}
+          walletNotice={walletNotice}
+          onClearWalletNotice={() => setWalletNotice(null)}
+          isDark={isDark}
+          onToggleTheme={() => setIsDark(!isDark)}
+        >
+          {selectedAgreement ? (
+            <AgreementDetailRoom
+              agreement={selectedAgreement}
+              currentAccount={effectiveAccount}
+              onUpdateAgreement={handleUpdateAgreement}
+              onBack={() => setSelectedAgreement(null)}
+            />
+          ) : activeTab === "workspace" ? (
+            <ConversationalWorkspace
+              initialType={workspaceInitialType}
+              currentUserAddress={effectiveAccount.address}
+              currentUserName={effectiveAccount.displayName}
+              agreements={agreements}
+              onSelectAgreement={(agr) => setSelectedAgreement(agr)}
+              onNavigateTab={(tab) => {
+                setSelectedAgreement(null);
+                setActiveTab(tab);
+              }}
+              onAgreementCreated={(newAgr) => {
+                setAgreements((prev) => [newAgr, ...prev]);
+                setSelectedAgreement(newAgr);
+              }}
+            />
+          ) : (
+            <AgreementListView
+              agreements={agreements}
+              activeFilter={activeTab}
+              onFilterChange={(tab) => {
+                setSelectedAgreement(null);
+                setActiveTab(tab);
+              }}
+              onSelectAgreement={(agr) => setSelectedAgreement(agr)}
+              onCreateNew={() => {
+                setSelectedAgreement(null);
+                setActiveTab("workspace");
+              }}
+            />
+          )}
+        </NavigationShell>
       )}
-    </NavigationShell>
+      <AuthModal onContinueDemo={handleEnterDemo} />
+    </>
   );
 }
 
 export default function App() {
   const content = (
-    <AuthProvider>
-      <TrustFlowMain />
-      <AuthModal />
-    </AuthProvider>
+    <MotionConfig reducedMotion="user">
+      <AuthProvider>
+        <TrustFlowMain />
+      </AuthProvider>
+    </MotionConfig>
   );
 
   if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter) {

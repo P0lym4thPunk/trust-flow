@@ -1,7 +1,18 @@
 import React from "react";
-import { ArrowRight, Clock, PlusCircle, CheckCircle2, ChevronRight, ShieldCheck } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
+import {
+  Clock,
+  PlusCircle,
+  ChevronRight,
+  CheckCircle2,
+  ShieldCheck,
+  AlertTriangle,
+  XCircle,
+  RotateCcw,
+} from "lucide-react";
 import { AgreementRecord } from "../types/agreement";
 import { formatAddress } from "../lib/stellar/config";
+import { getAgreementVisualStatus, getToneClasses } from "../lib/agreementStatus";
 
 interface AgreementListViewProps {
   agreements: AgreementRecord[];
@@ -18,7 +29,7 @@ export const AgreementListView: React.FC<AgreementListViewProps> = ({
   onCreateNew,
   onFilterChange,
 }) => {
-  // Filter logic based on plain user status
+  const shouldReduceMotion = useReducedMotion();
   const validAgreements = agreements.filter((agr) => agr && agr.id && agr.title);
 
   const filteredAgreements = validAgreements.filter((agr) => {
@@ -27,159 +38,226 @@ export const AgreementListView: React.FC<AgreementListViewProps> = ({
       return agr.status === "CREATED" && (!agr.payerAccepted || !agr.recipientAccepted);
     }
     if (activeFilter === "awaiting-funding") {
-      return agr.status === "CREATED" && agr.payerAccepted && agr.recipientAccepted;
+      return (
+        (agr.status as string) === "READY_FOR_FUNDING" ||
+        (agr.status === "CREATED" && agr.payerAccepted && agr.recipientAccepted)
+      );
     }
     if (activeFilter === "active-review") {
-      return agr.status === "FUNDED" || agr.status === "FULFILMENT_SUBMITTED" || agr.status === "APPROVED";
+      return (
+        agr.status === "FUNDED" ||
+        agr.status === "FULFILMENT_SUBMITTED" ||
+        agr.status === "APPROVED"
+      );
     }
     if (activeFilter === "completed") {
-      return agr.status === "RELEASED" || agr.status === "REFUNDED";
+      return (
+        agr.status === "RELEASED" ||
+        agr.status === "REFUNDED" ||
+        agr.status === "CANCELLED"
+      );
     }
     return true;
   });
 
   const filterTabs = [
-    { id: "all-agreements", label: "All payments" },
-    { id: "pending-acceptance", label: "Waiting for agreement" },
-    { id: "awaiting-funding", label: "Waiting for money" },
-    { id: "active-review", label: "In progress & review" },
+    { id: "all-agreements", label: "All" },
+    { id: "pending-acceptance", label: "Awaiting acceptance" },
+    { id: "awaiting-funding", label: "Awaiting funding" },
+    { id: "active-review", label: "In progress" },
     { id: "completed", label: "Completed" },
   ];
 
+  const viewHeaderMap: Record<string, { title: string; emptyTitle: string; emptyCopy: string }> = {
+    "all-agreements": {
+      title: "My payments",
+      emptyTitle: "No payments yet",
+      emptyCopy: "Create a protected payment, pay someone with conditions, or send a payment request.",
+    },
+    "pending-acceptance": {
+      title: "Awaiting acceptance",
+      emptyTitle: "Nothing waiting for acceptance",
+      emptyCopy: "Agreements waiting on the client or freelancer to confirm terms will show up here.",
+    },
+    "awaiting-funding": {
+      title: "Awaiting funding",
+      emptyTitle: "Nothing waiting for funding",
+      emptyCopy: "Accepted agreements that have not been funded yet will appear here.",
+    },
+    "active-review": {
+      title: "In progress",
+      emptyTitle: "No payments in progress",
+      emptyCopy: "Funded work, submitted deliverables awaiting review, and revision requests appear here.",
+    },
+    completed: {
+      title: "Completed",
+      emptyTitle: "No completed payments yet",
+      emptyCopy: "Released payments, refunds, and cancelled agreements are archived here.",
+    },
+  };
+
+  const viewCopy = viewHeaderMap[activeFilter] || viewHeaderMap["all-agreements"];
+
+  const formatTypeLabel = (type?: string) => {
+    if (type === "PROTECTED_PAYMENT") return "Protected payment";
+    if (type === "CONDITIONAL_DISBURSEMENT") return "Payment request";
+    return "Work agreement";
+  };
+
+  const renderStatusIcon = (key: string) => {
+    if (key === "released" || key === "approved") {
+      return <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />;
+    }
+    if (key === "funded" || key === "awaiting_review") {
+      return <ShieldCheck className="w-3.5 h-3.5 shrink-0" />;
+    }
+    if (key === "work_rejected" || key === "dispute_cancel") {
+      return <AlertTriangle className="w-3.5 h-3.5 shrink-0" />;
+    }
+    if (key === "refunded") {
+      return <RotateCcw className="w-3.5 h-3.5 shrink-0" />;
+    }
+    if (key === "cancelled") {
+      return <XCircle className="w-3.5 h-3.5 shrink-0" />;
+    }
+    return <Clock className="w-3.5 h-3.5 shrink-0" />;
+  };
+
   return (
-    <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in duration-150">
+    <motion.div
+      initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+      className="space-y-5 max-w-4xl mx-auto"
+    >
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--tf-border)]">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-950 dark:text-white font-display uppercase tracking-tight">
-            My Payments
+          <h1 className="font-display font-bold text-2xl sm:text-3xl tracking-tight text-slate-950 dark:text-white">
+            {viewCopy.title}
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            {filteredAgreements.length} {filteredAgreements.length === 1 ? "payment" : "payments"} in this view
+          <p className="text-xs sm:text-sm text-[var(--tf-muted)] mt-0.5 tabular-nums">
+            {filteredAgreements.length}{" "}
+            {filteredAgreements.length === 1 ? "agreement" : "agreements"}
           </p>
         </div>
 
         <button
+          type="button"
           onClick={onCreateNew}
-          className="px-4 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg shadow-xs transition-colors flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
+          className="inline-flex items-center gap-1.5 px-4 min-h-[42px] text-xs font-semibold text-slate-950 bg-[#F5D03A] hover:bg-[#E7BF24] rounded-xl transition-colors self-start sm:self-auto cursor-pointer whitespace-nowrap"
         >
           <PlusCircle className="w-4 h-4" />
-          Create a payment
+          <span>Create payment</span>
         </button>
       </div>
 
-      {/* Filter Tabs */}
+      {/* Filter Bar */}
       {onFilterChange && (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-          {filterTabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => onFilterChange(tab.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                activeFilter === tab.id
-                  ? "bg-slate-900 dark:bg-white text-white dark:text-slate-950 shadow-xs"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Payment Cards Grid */}
-      {filteredAgreements.length === 0 ? (
-        <div className="text-center py-16 px-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 mx-auto flex items-center justify-center mb-3">
-            <Clock className="w-6 h-6" />
-          </div>
-          <h3 className="font-bold text-sm text-slate-900 dark:text-white mb-1">
-            No payments found
-          </h3>
-          <p className="text-xs text-slate-500 max-w-sm mx-auto mb-5 leading-relaxed">
-            There are currently no transactions matching this filter. You can create a new protected payment at any time.
-          </p>
-          <button
-            onClick={onCreateNew}
-            className="px-5 py-2.5 text-xs font-bold text-slate-950 bg-[#F5D03A] hover:bg-[#E5BF24] rounded-lg transition-colors cursor-pointer"
-          >
-            Create a payment
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredAgreements.map((agr) => {
-            const statusLabel =
-              agr.status === "RELEASED"
-                ? "Completed"
-                : agr.status === "FUNDED"
-                ? "Money secured"
-                : agr.status === "FULFILMENT_SUBMITTED"
-                ? "Under review"
-                : agr.payerAccepted && agr.recipientAccepted
-                ? "Ready to add money"
-                : "Awaiting acceptance";
-
-            const statusColor =
-              agr.status === "RELEASED"
-                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                : agr.status === "FUNDED" || agr.status === "FULFILMENT_SUBMITTED"
-                ? "bg-purple-100 text-[#4A2574] dark:bg-purple-950/60 dark:text-purple-300"
-                : "bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300";
-
+          {filterTabs.map((tab) => {
+            const active = activeFilter === tab.id;
             return (
-              <div
-                key={agr.id}
-                onClick={() => onSelectAgreement(agr)}
-                className="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-[#F5D03A] transition-all cursor-pointer shadow-xs flex flex-col justify-between group"
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => onFilterChange(tab.id)}
+                className={`px-3.5 min-h-[38px] rounded-xl text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  active
+                    ? "bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-semibold"
+                    : "bg-[var(--tf-surface)] border border-[var(--tf-border)] text-[var(--tf-muted)] hover:text-slate-950 dark:hover:text-white"
+                }`}
               >
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-2.5">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase tracking-wide">
-                      {(agr.transactionType || "WORK").replace("_", " ")}
-                    </span>
-                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${statusColor}`}>
-                      {statusLabel}
-                    </span>
-                  </div>
-
-                  <h3 className="font-bold text-sm text-slate-950 dark:text-white mb-1.5 group-hover:text-[#4A2574] dark:group-hover:text-[#F5D03A] transition-colors">
-                    {agr.title}
-                  </h3>
-                  <p className="text-xs text-slate-500 line-clamp-2 mb-4 leading-relaxed">
-                    {agr.description || "Payment agreement"}
-                  </p>
-
-                  <div className="text-[11px] text-slate-400 space-y-1 mb-4">
-                    <div>
-                      Payer: <span className="font-mono text-slate-700 dark:text-slate-300">{formatAddress(agr.terms?.payer || "")}</span>
-                    </div>
-                    <div>
-                      Recipient: <span className="font-mono text-slate-700 dark:text-slate-300">{formatAddress(agr.terms?.recipient || "")}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between">
-                  <div>
-                    <span className="text-lg font-black tabular-nums text-slate-950 dark:text-white stat-highlight">
-                      {agr.terms?.amount || "0.00"}
-                    </span>
-                    <span className="text-xs font-bold text-slate-500 ml-1.5">
-                      {agr.terms?.asset || "USDC"}
-                    </span>
-                  </div>
-
-                  <div className="text-xs font-bold text-slate-700 dark:text-slate-300 group-hover:text-[#4A2574] dark:group-hover:text-[#F5D03A] flex items-center gap-1 transition-transform group-hover:translate-x-0.5">
-                    Open details
-                    <ChevronRight className="w-4 h-4" />
-                  </div>
-                </div>
-              </div>
+                {tab.label}
+              </button>
             );
           })}
         </div>
       )}
-    </div>
+
+      {/* Payment List */}
+      {filteredAgreements.length === 0 ? (
+        <div className="text-center py-14 px-5 bg-[var(--tf-surface)] rounded-2xl border border-[var(--tf-border)]">
+          <div className="w-11 h-11 rounded-full bg-[var(--tf-surface-subtle)] text-[var(--tf-muted)] mx-auto flex items-center justify-center mb-3">
+            <Clock className="w-5 h-5" />
+          </div>
+          <h3 className="font-display font-semibold text-base text-slate-950 dark:text-white mb-1">
+            {viewCopy.emptyTitle}
+          </h3>
+          <p className="text-xs text-[var(--tf-muted)] max-w-sm mx-auto mb-5 leading-relaxed">
+            {viewCopy.emptyCopy}
+          </p>
+          <button
+            type="button"
+            onClick={onCreateNew}
+            className="px-5 min-h-[42px] text-xs font-semibold text-slate-950 bg-[#F5D03A] hover:bg-[#E7BF24] rounded-xl transition-colors cursor-pointer"
+          >
+            Create payment
+          </button>
+        </div>
+      ) : (
+        <div className="divide-y divide-[var(--tf-border)] bg-[var(--tf-surface)] border border-[var(--tf-border)] rounded-2xl overflow-hidden">
+          {filteredAgreements.map((agr) => {
+            const visual = getAgreementVisualStatus(agr);
+            const tone = getToneClasses(visual.tone);
+
+            return (
+              <button
+                key={agr.id}
+                type="button"
+                onClick={() => onSelectAgreement(agr)}
+                className="w-full p-4 sm:p-5 text-left hover:bg-[var(--tf-surface-subtle)]/70 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer group"
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--tf-muted)]">
+                    <span>{formatTypeLabel(agr.transactionType)}</span>
+                    <span>·</span>
+                    <span className={`inline-flex items-center gap-1 font-medium ${tone.text}`}>
+                      {renderStatusIcon(visual.key)}
+                      <span>{visual.label}</span>
+                    </span>
+                    {visual.isDeadlinePassed && (
+                      <>
+                        <span>·</span>
+                        <span className="text-amber-700 dark:text-amber-300 font-medium">
+                          Target date passed
+                        </span>
+                      </>
+                    )}
+                    {visual.isSimulatedTx && (
+                      <>
+                        <span>·</span>
+                        <span className="text-[11px] text-[var(--tf-muted)]">Test simulation</span>
+                      </>
+                    )}
+                  </div>
+
+                  <h3 className="font-display font-semibold text-sm sm:text-base text-slate-950 dark:text-white truncate">
+                    {agr.title}
+                  </h3>
+
+                  <p className="text-xs text-[var(--tf-muted)] truncate">
+                    Client {formatAddress(agr.terms?.payer || "")} → Recipient{" "}
+                    {formatAddress(agr.terms?.recipient || "")}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0">
+                  <div className="text-left sm:text-right">
+                    <div className="font-display font-bold text-base sm:text-lg text-slate-950 dark:text-white tabular-nums">
+                      {agr.terms?.amount || "0.00"}{" "}
+                      <span className="text-xs font-medium text-[var(--tf-muted)]">
+                        {agr.terms?.asset || "USDC"}
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </motion.div>
   );
 };
