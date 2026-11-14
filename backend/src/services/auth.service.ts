@@ -4,6 +4,7 @@ import { AuthRuntimeConfig } from "../config/runtime.config.js";
 import { AuthRepository } from "../repositories/auth.repository.js";
 import { AppError, SessionRecord, UserRecord } from "../types/backend.types.js";
 import { JwtVerifierService } from "./jwtVerifier.service.js";
+import { PrivyClientService } from "./privyClient.service.js";
 
 export interface OtpDeliveryProvider {
   isConfigured(): boolean;
@@ -109,20 +110,30 @@ function isValidStellarAddress(addr: string): boolean {
 export class AuthService {
   private readonly otpStartBuckets = new Map<string, number[]>();
 
+  private readonly privyClient: PrivyClientService;
+
   constructor(
     private readonly repo: AuthRepository,
     private readonly config: AuthRuntimeConfig,
     private readonly jwtVerifier: JwtVerifierService,
     private readonly otpDelivery: OtpDeliveryProvider,
     private readonly horizonUrl: string,
-    private readonly fetchFn: typeof fetch = globalThis.fetch
-  ) {}
+    private readonly fetchFn: typeof fetch = globalThis.fetch,
+    privyClient?: PrivyClientService
+  ) {
+    this.privyClient =
+      privyClient ||
+      new PrivyClientService(this.fetchFn, {
+        baseUrl: this.config.privyApiBaseUrl,
+        timeoutMs: this.config.privyApiTimeoutMs,
+      });
+  }
 
   public getAuthCapabilities() {
     return {
       emailOtpConfigured: this.otpDelivery.isConfigured(),
       googleConfigured: Boolean(this.config.googleClientId),
-      privyConfigured: Boolean(this.config.privyAppId),
+      privyConfigured: Boolean(this.config.privyAppId && this.config.privyAppSecret),
       devSandboxEnabled: this.config.allowDevSandbox,
     };
   }
@@ -393,63 +404,96 @@ export class AuthService {
       );
     }
 
+    if (!this.config.privyAppSecret) {
+      throw new AppError(
+        503,
+        "PRIVY_CREDENTIALS_MISSING",
+        "Privy server verification credentials are not configured on this server (missing PRIVY_APP_SECRET)."
+      );
+    }
+
     if (!params.accessToken || typeof params.accessToken !== "string") {
       throw new AppError(401, "MISSING_PRIVY_TOKEN", "A verified Privy access token is required.");
     }
 
+    // 1. Verify Privy access token signature and claims first
     const verified = await this.jwtVerifier.verifyPrivyAccessToken(params.accessToken, {
       appId: this.config.privyAppId,
       verificationKeyPem: this.config.privyVerificationKey,
     });
 
     const privySub = verified.sub;
-    let validatedWallet: string | null = null;
-    if (params.stellarAddress) {
-      if (!isValidStellarAddress(params.stellarAddress)) {
+
+    // 2. Fetch authoritative Privy user record and extract verified embedded Stellar wallet & profile
+    const verifiedIdentity = await this.privyClient.getVerifiedUserIdentity({
+      privySub,
+      appId: this.config.privyAppId,
+      appSecret: this.config.privyAppSecret,
+    });
+
+    const authoritativeWallet = verifiedIdentity.stellarAddress;
+
+    // 3. Reject client-supplied wallet spoofing if stellarAddress was provided and does not match Privy
+    if (params.stellarAddress !== undefined && params.stellarAddress !== null) {
+      if (typeof params.stellarAddress !== "string") {
         throw new AppError(400, "INVALID_STELLAR_ADDRESS", "Provided Stellar wallet address is invalid.");
       }
-      validatedWallet = params.stellarAddress;
+      const submittedWallet = params.stellarAddress.trim();
+      if (submittedWallet.length > 0) {
+        if (!isValidStellarAddress(submittedWallet)) {
+          throw new AppError(400, "INVALID_STELLAR_ADDRESS", "Provided Stellar wallet address is invalid.");
+        }
+        if (submittedWallet !== authoritativeWallet) {
+          throw new AppError(
+            403,
+            "WALLET_OWNERSHIP_MISMATCH",
+            "Submitted Stellar wallet address does not match the verified Privy embedded wallet."
+          );
+        }
+      }
     }
 
     const nowIso = new Date().toISOString();
+    // 4. Identify user strictly by verified Privy subject (never auto-merge by email across providers)
     const existingBySub = await this.repo.findUserByProviderSubject("privy", privySub);
     let user = existingBySub;
     let isNewUser = false;
 
-    if (validatedWallet) {
-      const walletOwner = await this.repo.findUserByWalletAddress(validatedWallet);
-      if (walletOwner && walletOwner.id !== user?.id) {
-        throw new AppError(
-          409,
-          "WALLET_ALREADY_LINKED",
-          "This Stellar wallet address is already linked to another user account."
-        );
-      }
+    // 5. Enforce wallet uniqueness across all accounts
+    const walletOwner = await this.repo.findUserByWalletAddress(authoritativeWallet);
+    if (walletOwner && walletOwner.id !== user?.id) {
+      throw new AppError(
+        409,
+        "WALLET_ALREADY_LINKED",
+        "This Stellar wallet address is already linked to another user account."
+      );
     }
 
-    const normalizedEmail =
-      params.email && params.email.includes("@") ? params.email.trim().toLowerCase() : null;
+    // Never use unverified client-supplied email or displayName
+    const authoritativeEmail = verifiedIdentity.email;
+    const authoritativeDisplayName = verifiedIdentity.displayName;
 
     if (!user) {
       isNewUser = true;
       user = {
         id: `usr-${crypto.randomUUID()}`,
-        email: normalizedEmail,
-        displayName: params.displayName || (normalizedEmail ? normalizedEmail.split("@")[0] : "Privy User"),
+        email: authoritativeEmail,
+        displayName:
+          authoritativeDisplayName ||
+          (authoritativeEmail ? authoritativeEmail.split("@")[0] : "Privy User"),
         avatar: "🚀",
         provider: "privy",
         authVerified: true,
         providerSubject: privySub,
-        stellarAddress: validatedWallet,
-        walletCustody: validatedWallet ? "privy_embedded" : "none",
+        stellarAddress: authoritativeWallet,
+        walletCustody: "privy_embedded",
         isSandbox: false,
         createdAt: nowIso,
         lastLoginAt: nowIso,
       };
     } else {
-      // Never allow an attacker or client payload to hijack/overwrite another bound wallet arbitrarily;
-      // only set if previously null or unchanged.
-      if (user.stellarAddress && validatedWallet && user.stellarAddress !== validatedWallet) {
+      // Preserve wallet immutability: reject if the user already has a different bound wallet
+      if (user.stellarAddress && user.stellarAddress !== authoritativeWallet) {
         throw new AppError(
           409,
           "WALLET_IMMUTABLE",
@@ -458,8 +502,10 @@ export class AuthService {
       }
       user = {
         ...user,
-        stellarAddress: user.stellarAddress || validatedWallet,
-        walletCustody: user.stellarAddress || validatedWallet ? "privy_embedded" : user.walletCustody,
+        email: authoritativeEmail ?? user.email,
+        displayName: authoritativeDisplayName || user.displayName,
+        stellarAddress: user.stellarAddress || authoritativeWallet,
+        walletCustody: "privy_embedded",
         lastLoginAt: nowIso,
       };
     }

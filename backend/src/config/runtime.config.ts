@@ -16,6 +16,8 @@ export interface AuthRuntimeConfig {
   privyAppId: string | null;
   privyAppSecret: string | null;
   privyVerificationKey: string | null;
+  privyApiBaseUrl: string;
+  privyApiTimeoutMs: number;
   otpSecret: string;
   otpTtlMs: number;
   otpMaxAttempts: number;
@@ -76,6 +78,8 @@ export function getRuntimeConfig(overrides?: { dataDir?: string; allowDevSandbox
       privyAppId: process.env.PRIVY_APP_ID?.trim() || process.env.VITE_PRIVY_APP_ID?.trim() || null,
       privyAppSecret: process.env.PRIVY_APP_SECRET?.trim() || null,
       privyVerificationKey: process.env.PRIVY_VERIFICATION_KEY?.trim() || null,
+      privyApiBaseUrl: process.env.PRIVY_API_BASE_URL?.trim() || "https://api.privy.io",
+      privyApiTimeoutMs: parsePositiveInt(process.env.PRIVY_API_TIMEOUT_MS, 8000),
       otpSecret: process.env.OTP_SECRET?.trim() || EPHEMERAL_DEV_OTP_SECRET,
       otpTtlMs: parsePositiveInt(process.env.OTP_TTL_MS, 10 * 60 * 1000),
       otpMaxAttempts: parsePositiveInt(process.env.OTP_MAX_ATTEMPTS, 5),

@@ -50,9 +50,12 @@ function signEs256Jwt(
 async function startIsolatedServer(options: {
   tempDir: string;
   allowDevSandbox?: boolean;
+  isProd?: boolean;
   googleClientId?: string | null;
   privyAppId?: string | null;
+  privyAppSecret?: string | null;
   privyVerificationKey?: string | null;
+  privyApiTimeoutMs?: number;
   otpDelivery?: OtpDeliveryProvider;
   otpTtlMs?: number;
   otpMaxAttempts?: number;
@@ -66,9 +69,17 @@ async function startIsolatedServer(options: {
     allowDevSandbox: options.allowDevSandbox ?? true,
   });
 
+  if (options.isProd !== undefined) {
+    baseCfg.isProd = options.isProd;
+    baseCfg.nodeEnv = options.isProd ? "production" : "development";
+  }
   baseCfg.auth.googleClientId = options.googleClientId ?? null;
   baseCfg.auth.privyAppId = options.privyAppId ?? null;
+  baseCfg.auth.privyAppSecret = options.privyAppSecret ?? null;
   baseCfg.auth.privyVerificationKey = options.privyVerificationKey ?? null;
+  if (options.privyApiTimeoutMs !== undefined) {
+    baseCfg.auth.privyApiTimeoutMs = options.privyApiTimeoutMs;
+  }
   if (options.otpTtlMs !== undefined) baseCfg.auth.otpTtlMs = options.otpTtlMs;
   if (options.otpMaxAttempts !== undefined) baseCfg.auth.otpMaxAttempts = options.otpMaxAttempts;
   if (options.otpStartRateLimitMax !== undefined) {
@@ -357,11 +368,41 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
       const pubPem = publicKey.export({ format: "pem", type: "spki" }).toString();
       const privPem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
       const privyAppId = "cm-test-privy-app";
+      const privyAppSecret = "privy-test-secret-xyz";
+      let upstreamWallet = ALICE_ADDR;
 
       const srv = await startIsolatedServer({
         tempDir,
         privyAppId,
+        privyAppSecret,
         privyVerificationKey: pubPem,
+        fetchFn: (async (url: string) => {
+          if (url === "https://api.privy.io/v1/users/did:privy:user1") {
+            return new Response(
+              JSON.stringify({
+                id: "did:privy:user1",
+                created_at: 1731974895,
+                has_accepted_terms: true,
+                is_guest: false,
+                linked_accounts: [
+                  {
+                    type: "wallet",
+                    id: "wlt-alice",
+                    address: upstreamWallet,
+                    chain_type: "stellar",
+                    wallet_client_type: "privy",
+                    wallet_client: "privy",
+                    connector_type: "embedded",
+                    verified_at: 1731974895,
+                  },
+                ],
+                mfa_methods: [],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
       });
       activeClosers.push(srv.close);
 
@@ -387,7 +428,7 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
         privPem
       );
 
-      // Valid login binds ALICE_ADDR once
+      // Valid login binds ALICE_ADDR once from authoritative Privy API
       const okRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -401,8 +442,8 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
       assert.strictEqual(okBody.user.stellarAddress, ALICE_ADDR);
       assert.strictEqual(okBody.user.walletCustody, "privy_embedded");
 
-      // Re-authenticating with a DIFFERENT stellarAddress is rejected (409 WALLET_IMMUTABLE)
-      const hijackRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+      // Submitting a different stellarAddress is rejected with 403 WALLET_OWNERSHIP_MISMATCH
+      const spoofRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -410,7 +451,23 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
           stellarAddress: BOB_ADDR,
         }),
       });
-      assert.strictEqual(hijackRes.status, 409);
+      assert.strictEqual(spoofRes.status, 403);
+      const spoofBody = (await spoofRes.json()) as any;
+      assert.strictEqual(spoofBody.code, "WALLET_OWNERSHIP_MISMATCH");
+
+      // Even if upstream Privy ever returned a different wallet for an already-bound account -> 409 WALLET_IMMUTABLE
+      upstreamWallet = BOB_ADDR;
+      const immutableRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: validPrivyJwt,
+          stellarAddress: BOB_ADDR,
+        }),
+      });
+      assert.strictEqual(immutableRes.status, 409);
+      const immutableBody = (await immutableRes.json()) as any;
+      assert.strictEqual(immutableBody.code, "WALLET_IMMUTABLE");
     });
 
     it("gates dev sandbox behind allowDevSandbox=true and returns 403 when disabled", async () => {
@@ -835,6 +892,844 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
         body: JSON.stringify({ prompt: "test", transactionType: "WORK" }),
       });
       assert.strictEqual(rateLimited.status, 429);
+    });
+  });
+
+  describe("5. Server-Side Privy Identity & Embedded Stellar Wallet Verification (Step 1)", () => {
+    function createPrivyKeys(appId = "cm-privy-app-step1") {
+      const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", {
+        namedCurve: "P-256",
+      });
+      return {
+        appId,
+        appSecret: "super-secret-privy-key-do-not-leak",
+        pubPem: publicKey.export({ format: "pem", type: "spki" }).toString(),
+        privPem: privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+      };
+    }
+
+    function issuePrivyToken(appId: string, sub: string, privPem: string) {
+      const now = Math.floor(Date.now() / 1000);
+      return signEs256Jwt({ iss: "privy.io", aud: appId, sub, exp: now + 300 }, privPem);
+    }
+
+    function readJsonFile(filePath: string): Record<string, any> {
+      if (!fs.existsSync(filePath)) return {};
+      return JSON.parse(fs.readFileSync(filePath, "utf-8")) as Record<string, any>;
+    }
+
+    it("A/C. Verifies Privy REST API auth headers, accepts single embedded Stellar wallet, and supports omitted client stellarAddress", async () => {
+      const keys = createPrivyKeys();
+      const capturedRequests: Array<{ url: string; headers: Record<string, string> }> = [];
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        fetchFn: (async (url: string, init?: RequestInit) => {
+          if (url.startsWith("https://api.privy.io/v1/users/")) {
+            const headersObj: Record<string, string> = {};
+            if (init?.headers && typeof init.headers === "object" && !Array.isArray(init.headers)) {
+              for (const [k, v] of Object.entries(init.headers as Record<string, string>)) {
+                headersObj[k.toLowerCase()] = v;
+              }
+            }
+            capturedRequests.push({ url, headers: headersObj });
+            return new Response(
+              JSON.stringify({
+                id: "did:privy:alice-1",
+                created_at: 1731974895,
+                has_accepted_terms: true,
+                is_guest: false,
+                linked_accounts: [
+                  {
+                    type: "email",
+                    address: "Alice.Verified@Example.com",
+                    verified_at: 1731974895,
+                    first_verified_at: 1731974895,
+                    latest_verified_at: 1731974895,
+                  },
+                  {
+                    type: "wallet",
+                    id: "wlt-eth-1",
+                    address: "0x7Ef5363308127128969618240eDcB9F8f61e90F6",
+                    chain_type: "ethereum",
+                    wallet_client_type: "metamask",
+                    connector_type: "injected",
+                    verified_at: 1731974895,
+                  },
+                  {
+                    type: "wallet",
+                    id: "wlt-stellar-1",
+                    address: ALICE_ADDR,
+                    chain_type: "stellar",
+                    wallet_client_type: "privy",
+                    wallet_client: "privy",
+                    connector_type: "embedded",
+                    imported: false,
+                    delegated: false,
+                    user_can_sign: true,
+                    wallet_index: 0,
+                    verified_at: 1731974895,
+                  },
+                ],
+                mfa_methods: [],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      const token = issuePrivyToken(keys.appId, "did:privy:alice-1", keys.privPem);
+
+      // C: Client omits stellarAddress; backend uses authoritative Privy wallet
+      const res = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token }),
+      });
+
+      assert.strictEqual(res.status, 200);
+      const body = (await res.json()) as any;
+      assert.strictEqual(body.isNewUser, true);
+      assert.ok(String(body.token).startsWith("tf-sess-"));
+      assert.strictEqual(body.user.provider, "privy");
+      assert.strictEqual(body.user.providerSubject, "did:privy:alice-1");
+      assert.strictEqual(body.user.stellarAddress, ALICE_ADDR);
+      assert.strictEqual(body.user.walletCustody, "privy_embedded");
+      assert.strictEqual(body.user.email, "alice.verified@example.com");
+      assert.strictEqual(body.wallet.address, ALICE_ADDR);
+      assert.strictEqual(body.wallet.isEmbedded, true);
+
+      // Verify exact Privy REST endpoint and auth headers
+      assert.strictEqual(capturedRequests.length, 1);
+      assert.strictEqual(capturedRequests[0].url, "https://api.privy.io/v1/users/did:privy:alice-1");
+      assert.strictEqual(capturedRequests[0].headers["privy-app-id"], keys.appId);
+      const expectedBasic = `Basic ${Buffer.from(`${keys.appId}:${keys.appSecret}`).toString("base64")}`;
+      assert.strictEqual(capturedRequests[0].headers["authorization"], expectedBasic);
+    });
+
+    it("B. Rejects client wallet spoofing with 403 WALLET_OWNERSHIP_MISMATCH and creates no user or session", async () => {
+      const keys = createPrivyKeys();
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        fetchFn: (async (url: string) => {
+          if (url === "https://api.privy.io/v1/users/did:privy:victim-or-user") {
+            return new Response(
+              JSON.stringify({
+                id: "did:privy:victim-or-user",
+                created_at: 1731974895,
+                has_accepted_terms: true,
+                is_guest: false,
+                linked_accounts: [
+                  {
+                    type: "wallet",
+                    address: ALICE_ADDR,
+                    chain_type: "stellar",
+                    wallet_client_type: "privy",
+                    connector_type: "embedded",
+                    verified_at: 1731974895,
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      const token = issuePrivyToken(keys.appId, "did:privy:victim-or-user", keys.privPem);
+      const res = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: token,
+          stellarAddress: BOB_ADDR,
+        }),
+      });
+
+      assert.strictEqual(res.status, 403);
+      const body = (await res.json()) as any;
+      assert.strictEqual(body.code, "WALLET_OWNERSHIP_MISMATCH");
+      assert.strictEqual(body.token, undefined);
+
+      // Verify zero user or session records persisted
+      assert.deepStrictEqual(readJsonFile(path.join(tempDir, "users.json")), {});
+      assert.deepStrictEqual(readJsonFile(path.join(tempDir, "sessions.json")), {});
+    });
+
+    it("D/E/F. Rejects missing, multiple, external-only, wrong-chain, and malformed Stellar wallet records", async () => {
+      const keys = createPrivyKeys();
+      let mockLinkedAccounts: unknown[] = [];
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        fetchFn: (async (url: string) => {
+          if (url === "https://api.privy.io/v1/users/did:privy:edge-cases") {
+            return new Response(
+              JSON.stringify({
+                id: "did:privy:edge-cases",
+                created_at: 1731974895,
+                has_accepted_terms: true,
+                is_guest: false,
+                linked_accounts: mockLinkedAccounts,
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      const token = issuePrivyToken(keys.appId, "did:privy:edge-cases", keys.privPem);
+      const runSync = async (stellarAddress?: string) =>
+        fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken: token, stellarAddress }),
+        });
+
+      // D1: No wallets at all
+      mockLinkedAccounts = [{ type: "email", address: "u@example.com", verified_at: 1731974895 }];
+      const noWalletRes = await runSync(ALICE_ADDR);
+      assert.strictEqual(noWalletRes.status, 403);
+      assert.strictEqual(((await noWalletRes.json()) as any).code, "NO_EMBEDDED_STELLAR_WALLET");
+
+      // D2: External Stellar wallet only (e.g. Freighter injected)
+      mockLinkedAccounts = [
+        {
+          type: "wallet",
+          address: ALICE_ADDR,
+          chain_type: "stellar",
+          wallet_client_type: "freighter",
+          connector_type: "injected",
+          verified_at: 1731974895,
+        },
+      ];
+      const externalOnlyRes = await runSync(ALICE_ADDR);
+      assert.strictEqual(externalOnlyRes.status, 403);
+      assert.strictEqual(((await externalOnlyRes.json()) as any).code, "NO_EMBEDDED_STELLAR_WALLET");
+
+      // F1: Wrong chain type only (ethereum)
+      mockLinkedAccounts = [
+        {
+          type: "wallet",
+          address: "0x7Ef5363308127128969618240eDcB9F8f61e90F6",
+          chain_type: "ethereum",
+          wallet_client_type: "privy",
+          connector_type: "embedded",
+          verified_at: 1731974895,
+        },
+      ];
+      const wrongChainRes = await runSync();
+      assert.strictEqual(wrongChainRes.status, 403);
+      assert.strictEqual(((await wrongChainRes.json()) as any).code, "NO_EMBEDDED_STELLAR_WALLET");
+
+      // E: Multiple eligible embedded Stellar wallets
+      mockLinkedAccounts = [
+        {
+          type: "wallet",
+          address: ALICE_ADDR,
+          chain_type: "stellar",
+          wallet_client_type: "privy",
+          connector_type: "embedded",
+          verified_at: 1731974895,
+        },
+        {
+          type: "wallet",
+          address: BOB_ADDR,
+          chain_type: "stellar",
+          wallet_client_type: "privy",
+          connector_type: "embedded",
+          verified_at: 1731974896,
+        },
+      ];
+      const multiRes = await runSync();
+      assert.strictEqual(multiRes.status, 409);
+      assert.strictEqual(((await multiRes.json()) as any).code, "MULTIPLE_EMBEDDED_STELLAR_WALLETS");
+
+      // F2: Missing wallet address
+      mockLinkedAccounts = [
+        {
+          type: "wallet",
+          chain_type: "stellar",
+          wallet_client_type: "privy",
+          connector_type: "embedded",
+        },
+      ];
+      const missingAddrRes = await runSync();
+      assert.strictEqual(missingAddrRes.status, 502);
+      assert.strictEqual(((await missingAddrRes.json()) as any).code, "INVALID_PRIVY_WALLET");
+
+      // F3: Invalid Stellar StrKey
+      mockLinkedAccounts = [
+        {
+          type: "wallet",
+          address: "GNOTAVALIDSTELLARADDRESS1234567890",
+          chain_type: "stellar",
+          wallet_client_type: "privy",
+          connector_type: "embedded",
+        },
+      ];
+      const invalidKeyRes = await runSync();
+      assert.strictEqual(invalidKeyRes.status, 400);
+      assert.strictEqual(((await invalidKeyRes.json()) as any).code, "INVALID_STELLAR_ADDRESS");
+
+      // F4: External wallet presented as embedded (contradictory metadata)
+      mockLinkedAccounts = [
+        {
+          type: "wallet",
+          address: ALICE_ADDR,
+          chain_type: "stellar",
+          wallet_client_type: "privy",
+          connector_type: "injected",
+        },
+      ];
+      const fakeEmbedded1 = await runSync();
+      assert.strictEqual(fakeEmbedded1.status, 502);
+      assert.strictEqual(((await fakeEmbedded1.json()) as any).code, "INVALID_PRIVY_WALLET");
+
+      mockLinkedAccounts = [
+        {
+          type: "wallet",
+          address: ALICE_ADDR,
+          chain_type: "stellar",
+          wallet_client_type: "privy",
+          wallet_client: "unknown",
+          connector_type: "embedded",
+        },
+      ];
+      const fakeEmbedded2 = await runSync();
+      assert.strictEqual(fakeEmbedded2.status, 502);
+      assert.strictEqual(((await fakeEmbedded2.json()) as any).code, "INVALID_PRIVY_WALLET");
+
+      // F5: Incomplete linked-account record (missing chain_type)
+      mockLinkedAccounts = [
+        {
+          type: "wallet",
+          address: ALICE_ADDR,
+        },
+      ];
+      const incompleteRes = await runSync();
+      assert.strictEqual(incompleteRes.status, 502);
+      assert.strictEqual(((await incompleteRes.json()) as any).code, "PRIVY_RESPONSE_INVALID");
+
+      assert.deepStrictEqual(readJsonFile(path.join(tempDir, "users.json")), {});
+      assert.deepStrictEqual(readJsonFile(path.join(tempDir, "sessions.json")), {});
+    });
+
+    it("G/H. Uses authoritative verified email and display name only; ignores unverified emails and client-supplied profile fields", async () => {
+      const keys = createPrivyKeys();
+      let currentSub = "did:privy:user-unverified-email";
+      const responsesBySub: Record<string, Record<string, unknown>> = {
+        "did:privy:user-unverified-email": {
+          id: "did:privy:user-unverified-email",
+          linked_accounts: [
+            {
+              type: "email",
+              address: "unverified@example.com",
+              verified_at: null,
+            },
+            {
+              type: "wallet",
+              address: ALICE_ADDR,
+              chain_type: "stellar",
+              wallet_client_type: "privy",
+              connector_type: "embedded",
+            },
+          ],
+        },
+        "did:privy:user-google-verified": {
+          id: "did:privy:user-google-verified",
+          linked_accounts: [
+            {
+              type: "google_oauth",
+              subject: "g-123",
+              email: "Verified.Google@Example.com",
+              name: "Jane Authoritative",
+              verified_at: 1731974895,
+            },
+            {
+              type: "wallet",
+              address: BOB_ADDR,
+              chain_type: "stellar",
+              wallet_client_type: "privy",
+              connector_type: "embedded",
+            },
+          ],
+        },
+      };
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        fetchFn: (async (url: string) => {
+          const prefix = "https://api.privy.io/v1/users/";
+          if (url.startsWith(prefix)) {
+            const sub = url.slice(prefix.length);
+            if (responsesBySub[sub]) {
+              return new Response(JSON.stringify(responsesBySub[sub]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      // Case 1: Unverified email -> email stays null, client email/displayName ignored, fallback "Privy User"
+      const token1 = issuePrivyToken(keys.appId, currentSub, keys.privPem);
+      const res1 = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: token1,
+          email: "spoofed@attacker.com",
+          displayName: "Spoofed Name",
+        }),
+      });
+      assert.strictEqual(res1.status, 200);
+      const body1 = (await res1.json()) as any;
+      assert.strictEqual(body1.user.email, null);
+      assert.strictEqual(body1.user.displayName, "Privy User");
+
+      // Case 2: Verified Google OAuth -> authoritative email & displayName retained, client fields ignored
+      currentSub = "did:privy:user-google-verified";
+      const token2 = issuePrivyToken(keys.appId, currentSub, keys.privPem);
+      const res2 = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: token2,
+          email: "spoofed@attacker.com",
+          displayName: "Attacker Override",
+        }),
+      });
+      assert.strictEqual(res2.status, 200);
+      const body2 = (await res2.json()) as any;
+      assert.strictEqual(body2.user.email, "verified.google@example.com");
+      assert.strictEqual(body2.user.displayName, "Jane Authoritative");
+    });
+
+    it("I. Fails closed across Privy API HTTP errors, network failures, timeouts, invalid JSON, and bad schemas without leaking secrets", async () => {
+      const keys = createPrivyKeys();
+      type FailureMode =
+        | "401"
+        | "403"
+        | "404"
+        | "429"
+        | "500"
+        | "network"
+        | "timeout"
+        | "bad_json"
+        | "bad_schema"
+        | "sub_mismatch";
+      let mode: FailureMode = "401";
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        privyApiTimeoutMs: 40,
+        fetchFn: (async () => {
+          switch (mode) {
+            case "401":
+              return new Response("Unauthorized", { status: 401 });
+            case "403":
+              return new Response("Forbidden", { status: 403 });
+            case "404":
+              return new Response("Not Found", { status: 404 });
+            case "429":
+              return new Response("Too Many Requests", { status: 429 });
+            case "500":
+              return new Response("Internal Server Error", { status: 500 });
+            case "network":
+              throw new Error(`ECONNREFUSED with secret ${keys.appSecret}`);
+            case "timeout":
+              return new Promise<Response>(() => {});
+            case "bad_json":
+              return new Response("{not-json", { status: 200 });
+            case "bad_schema":
+              return new Response(JSON.stringify({ id: "did:privy:fail-cases" }), { status: 200 });
+            case "sub_mismatch":
+              return new Response(
+                JSON.stringify({
+                  id: "did:privy:someone-else",
+                  linked_accounts: [
+                    {
+                      type: "wallet",
+                      address: ALICE_ADDR,
+                      chain_type: "stellar",
+                      wallet_client_type: "privy",
+                      connector_type: "embedded",
+                    },
+                  ],
+                }),
+                { status: 200 }
+              );
+          }
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      const token = issuePrivyToken(keys.appId, "did:privy:fail-cases", keys.privPem);
+
+      const expectations: Array<[FailureMode, number, string]> = [
+        ["401", 502, "PRIVY_API_AUTH_FAILED"],
+        ["403", 502, "PRIVY_API_AUTH_FAILED"],
+        ["404", 404, "PRIVY_USER_NOT_FOUND"],
+        ["429", 503, "PRIVY_API_RATE_LIMITED"],
+        ["500", 502, "PRIVY_LOOKUP_FAILED"],
+        ["network", 502, "PRIVY_API_UNAVAILABLE"],
+        ["timeout", 504, "PRIVY_API_TIMEOUT"],
+        ["bad_json", 502, "PRIVY_RESPONSE_INVALID"],
+        ["bad_schema", 502, "PRIVY_RESPONSE_INVALID"],
+        ["sub_mismatch", 502, "PRIVY_IDENTITY_MISMATCH"],
+      ];
+
+      for (const [m, expectedStatus, expectedCode] of expectations) {
+        mode = m;
+        const res = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken: token, stellarAddress: ALICE_ADDR }),
+        });
+        assert.strictEqual(res.status, expectedStatus, `Mode ${m} expected status ${expectedStatus}`);
+        const rawText = await res.text();
+        assert.ok(!rawText.includes(keys.appSecret), `Mode ${m} must never leak appSecret`);
+        assert.ok(!rawText.includes(token), `Mode ${m} must never leak accessToken`);
+        const parsed = JSON.parse(rawText) as any;
+        assert.strictEqual(parsed.code, expectedCode, `Mode ${m} expected code ${expectedCode}`);
+      }
+
+      assert.deepStrictEqual(readJsonFile(path.join(tempDir, "users.json")), {});
+      assert.deepStrictEqual(readJsonFile(path.join(tempDir, "sessions.json")), {});
+    });
+
+    it("J. Fails closed when PRIVY_APP_SECRET or PRIVY_APP_ID is missing without breaking standalone email OTP", async () => {
+      const keys = createPrivyKeys();
+      const token = issuePrivyToken(keys.appId, "did:privy:cred-test", keys.privPem);
+
+      // Production missing PRIVY_APP_SECRET
+      const prodNoSecret = await startIsolatedServer({
+        tempDir,
+        isProd: true,
+        allowDevSandbox: false,
+        privyAppId: keys.appId,
+        privyAppSecret: null,
+        privyVerificationKey: keys.pubPem,
+      });
+      activeClosers.push(prodNoSecret.close);
+
+      const resProdNoSecret = await fetch(`${prodNoSecret.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token, stellarAddress: ALICE_ADDR }),
+      });
+      assert.strictEqual(resProdNoSecret.status, 503);
+      assert.strictEqual(((await resProdNoSecret.json()) as any).code, "PRIVY_CREDENTIALS_MISSING");
+
+      // Production missing PRIVY_APP_ID
+      const prodNoAppId = await startIsolatedServer({
+        tempDir: fs.mkdtempSync(path.join(os.tmpdir(), "trustflow-prod-no-appid-")),
+        isProd: true,
+        allowDevSandbox: false,
+        privyAppId: null,
+        privyAppSecret: keys.appSecret,
+      });
+      activeClosers.push(prodNoAppId.close);
+
+      const resProdNoAppId = await fetch(`${prodNoAppId.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token, stellarAddress: ALICE_ADDR }),
+      });
+      assert.strictEqual(resProdNoAppId.status, 503);
+      assert.strictEqual(((await resProdNoAppId.json()) as any).code, "PRIVY_AUTH_UNAVAILABLE");
+
+      // Development missing PRIVY_APP_SECRET also fails closed (never falls back to client body)
+      // AND standalone email OTP still works when Privy credentials are absent
+      const sentCodes: string[] = [];
+      const devNoSecret = await startIsolatedServer({
+        tempDir: fs.mkdtempSync(path.join(os.tmpdir(), "trustflow-dev-no-secret-")),
+        isProd: false,
+        privyAppId: keys.appId,
+        privyAppSecret: null,
+        privyVerificationKey: keys.pubPem,
+        otpDelivery: {
+          isConfigured: () => true,
+          async sendOtp(_email, code) {
+            sentCodes.push(code);
+          },
+        },
+      });
+      activeClosers.push(devNoSecret.close);
+
+      const resDevNoSecret = await fetch(`${devNoSecret.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token, stellarAddress: ALICE_ADDR }),
+      });
+      assert.strictEqual(resDevNoSecret.status, 503);
+      assert.strictEqual(((await resDevNoSecret.json()) as any).code, "PRIVY_CREDENTIALS_MISSING");
+
+      // Standalone email OTP remains functional
+      const otpStart = await fetch(`${devNoSecret.baseUrl}/api/auth/otp/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "standalone@example.com" }),
+      });
+      assert.strictEqual(otpStart.status, 200);
+      const otpVerify = await fetch(`${devNoSecret.baseUrl}/api/auth/otp/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "standalone@example.com", code: sentCodes[0] }),
+      });
+      assert.strictEqual(otpVerify.status, 200);
+    });
+
+    it("K. Preserves existing account integrity, wallet uniqueness, immutability, and prevents cross-provider email merge", async () => {
+      const keys = createPrivyKeys();
+      const sentCodes: string[] = [];
+      const privyRecords: Record<string, { wallet: string; email: string | null; name: string | null }> = {
+        "did:privy:existing-user": {
+          wallet: ALICE_ADDR,
+          email: "shared@example.com",
+          name: "Alice Privy",
+        },
+        "did:privy:collision-user": {
+          wallet: ALICE_ADDR,
+          email: "other@example.com",
+          name: "Collision User",
+        },
+      };
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        otpDelivery: {
+          isConfigured: () => true,
+          async sendOtp(_email, code) {
+            sentCodes.push(code);
+          },
+        },
+        fetchFn: (async (url: string) => {
+          const prefix = "https://api.privy.io/v1/users/";
+          if (url.startsWith(prefix)) {
+            const sub = url.slice(prefix.length);
+            const rec = privyRecords[sub];
+            if (rec) {
+              const accounts: Record<string, unknown>[] = [
+                {
+                  type: "wallet",
+                  address: rec.wallet,
+                  chain_type: "stellar",
+                  wallet_client_type: "privy",
+                  connector_type: "embedded",
+                },
+              ];
+              if (rec.email) {
+                accounts.push({ type: "email", address: rec.email, verified_at: 1731974895 });
+              }
+              if (rec.name) {
+                accounts.push({
+                  type: "google_oauth",
+                  subject: "g-sub",
+                  email: rec.email || "g@example.com",
+                  name: rec.name,
+                  verified_at: 1731974895,
+                });
+              }
+              return new Response(
+                JSON.stringify({ id: sub, linked_accounts: accounts }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      // 1. Create a standalone email_otp account with shared@example.com
+      await fetch(`${srv.baseUrl}/api/auth/otp/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "shared@example.com" }),
+      });
+      const otpRes = await fetch(`${srv.baseUrl}/api/auth/otp/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "shared@example.com", code: sentCodes[0] }),
+      });
+      const otpUser = ((await otpRes.json()) as any).user;
+
+      // 2. Privy login with same verified email creates a SEPARATE privy user (no email merge)
+      const tokenExisting = issuePrivyToken(keys.appId, "did:privy:existing-user", keys.privPem);
+      const firstPrivy = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: tokenExisting }),
+      });
+      assert.strictEqual(firstPrivy.status, 200);
+      const firstBody = (await firstPrivy.json()) as any;
+      assert.strictEqual(firstBody.isNewUser, true);
+      assert.notStrictEqual(firstBody.user.id, otpUser.id);
+      assert.strictEqual(firstBody.user.provider, "privy");
+
+      // 3. Repeat Privy login matches existing user, and unverified client profile data cannot overwrite it
+      privyRecords["did:privy:existing-user"].name = null;
+      privyRecords["did:privy:existing-user"].email = null;
+      const repeatPrivy = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: tokenExisting,
+          email: "evil-overwrite@example.com",
+          displayName: "Evil Overwrite",
+        }),
+      });
+      assert.strictEqual(repeatPrivy.status, 200);
+      const repeatBody = (await repeatPrivy.json()) as any;
+      assert.strictEqual(repeatBody.isNewUser, false);
+      assert.strictEqual(repeatBody.user.id, firstBody.user.id);
+      assert.strictEqual(repeatBody.user.email, "shared@example.com");
+      assert.strictEqual(repeatBody.user.displayName, "Alice Privy");
+
+      // 4. Different Privy DID claiming the same wallet address is rejected with 409 WALLET_ALREADY_LINKED
+      const tokenCollision = issuePrivyToken(keys.appId, "did:privy:collision-user", keys.privPem);
+      const collisionRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: tokenCollision }),
+      });
+      assert.strictEqual(collisionRes.status, 409);
+      assert.strictEqual(((await collisionRes.json()) as any).code, "WALLET_ALREADY_LINKED");
+    });
+
+    it("L. Agreement authorization regression: attacker cannot spoof counterparty stellarAddress via privy-sync to access or accept an agreement", async () => {
+      const keys = createPrivyKeys();
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        fetchFn: (async (url: string) => {
+          if (url === "https://api.privy.io/v1/users/did:privy:attacker") {
+            return new Response(
+              JSON.stringify({
+                id: "did:privy:attacker",
+                linked_accounts: [
+                  {
+                    type: "wallet",
+                    address: CHARLIE_ADDR,
+                    chain_type: "stellar",
+                    wallet_client_type: "privy",
+                    connector_type: "embedded",
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      // Alice creates an agreement with Bob as recipient and Alice as approver (Charlie is an outsider)
+      const aliceToken = await loginSandbox(srv.baseUrl, "alice");
+      const createRes = await fetch(`${srv.baseUrl}/api/agreements`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${aliceToken}`,
+        },
+        body: JSON.stringify({
+          transactionType: "WORK",
+          terms: {
+            amount: "500.00",
+            asset: "USDC",
+            payer: ALICE_ADDR,
+            recipient: BOB_ADDR,
+            approver: ALICE_ADDR,
+            title: "Protected Milestone",
+            description: "Deliver production backend",
+            deliverables: ["API endpoints"],
+            condition: "Payer approves delivery",
+            cancellationTerms: "Mutual agreement",
+            deadline: "2026-12-20T00:00:00.000Z",
+            contractId: "PENDING_TRUSTLESS_WORK_INTEGRATION",
+            domain: "trustflow.stellar.escrow.v1",
+            network: "testnet",
+            version: 1,
+          },
+        }),
+      });
+      assert.strictEqual(createRes.status, 201);
+      const agreement = (await createRes.json()) as AgreementRecord;
+
+      // Attacker attempts privy-sync spoofing BOB_ADDR (the agreement recipient)
+      const attackerJwt = issuePrivyToken(keys.appId, "did:privy:attacker", keys.privPem);
+      const spoofSyncRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: attackerJwt,
+          stellarAddress: BOB_ADDR,
+        }),
+      });
+      assert.strictEqual(spoofSyncRes.status, 403);
+      assert.strictEqual(((await spoofSyncRes.json()) as any).code, "WALLET_OWNERSHIP_MISMATCH");
+
+      // Even if attacker completes legitimate privy-sync, they receive only CHARLIE_ADDR and cannot read or accept Bob's agreement
+      const realSyncRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: attackerJwt }),
+      });
+      assert.strictEqual(realSyncRes.status, 200);
+      const attackerSession = (await realSyncRes.json()) as any;
+      assert.strictEqual(attackerSession.user.stellarAddress, CHARLIE_ADDR);
+
+      const getAgreementRes = await fetch(`${srv.baseUrl}/api/agreements/${agreement.id}`, {
+        headers: { Authorization: `Bearer ${attackerSession.token}` },
+      });
+      assert.strictEqual(getAgreementRes.status, 403);
+
+      const acceptRes = await fetch(`${srv.baseUrl}/api/agreements/${agreement.id}/accept`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${attackerSession.token}`,
+        },
+        body: JSON.stringify({
+          role: "RECIPIENT",
+          canonicalHash: agreement.canonicalHash,
+        }),
+      });
+      assert.strictEqual(acceptRes.status, 403);
     });
   });
 });

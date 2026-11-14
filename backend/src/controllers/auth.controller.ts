@@ -45,13 +45,18 @@ export function createAuthController(authService: AuthService) {
         const authHeader = req.headers.authorization;
         const headerToken =
           authHeader && authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : undefined;
-        const accessToken = req.body?.accessToken || headerToken;
-        const { stellarAddress, email, displayName } = req.body || {};
+        const body =
+          req.body && typeof req.body === "object" && !Array.isArray(req.body)
+            ? (req.body as Record<string, unknown>)
+            : {};
+        const accessToken =
+          typeof body.accessToken === "string" && body.accessToken.trim().length > 0
+            ? body.accessToken
+            : headerToken;
+        const stellarAddress = body.stellarAddress as string | undefined;
         const result = await authService.authenticateWithPrivy({
-          accessToken,
+          accessToken: accessToken || "",
           stellarAddress,
-          email,
-          displayName,
         });
         res.json(result);
       } catch (err) {
