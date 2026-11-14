@@ -1,56 +1,77 @@
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import http from "http";
 import { computeCanonicalHash, canonicalizeJson } from "../src/lib/hash";
-import { agreementService } from "../backend/src/services/agreement.service";
-import { handleAcceptAgreement } from "../backend/src/controllers/agreement.controller";
-import { AgreementRecord } from "../src/types/agreement";
+import { createBackendApp } from "../backend/src/index";
+import { SANDBOX_PERSONAS } from "../backend/src/services/auth.service";
 
-const expect = (actual: any) => ({
-  toBe: (expected: any) => assert.strictEqual(actual, expected),
-  not: {
-    toBe: (expected: any) => assert.notStrictEqual(actual, expected),
-    toBeNull: () => assert.notStrictEqual(actual, null),
-  },
-  toHaveLength: (len: number) => assert.strictEqual(actual?.length, len),
-  toContain: (substr: string) => assert.ok(String(actual).includes(substr)),
-});
+const ALICE_ADDR = SANDBOX_PERSONAS.alice.stellarAddress;
+const BOB_ADDR = SANDBOX_PERSONAS.bob.stellarAddress;
 
+async function startTestServer(tempDir: string) {
+  const backend = createBackendApp({
+    dataDir: tempDir,
+    allowDevSandbox: true,
+  });
+  const server = http.createServer(backend.app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const addr = server.address() as { port: number };
+  const baseUrl = `http://127.0.0.1:${addr.port}`;
+  return {
+    baseUrl,
+    backend,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
 
-describe("TrustFlow Canonical Hash & Counter-Party Acceptance Suite", () => {
+async function loginSandbox(baseUrl: string, persona: "alice" | "bob" | "charlie"): Promise<string> {
+  const res = await fetch(`${baseUrl}/api/auth/sandbox`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ persona }),
+  });
+  assert.strictEqual(res.status, 200);
+  const data = (await res.json()) as { token: string };
+  return data.token;
+}
+
+describe("TrustFlow Canonical Hash & Isolated Counter-Party Acceptance Suite", () => {
   const sampleTerms1 = {
     amount: "500.00",
     asset: "USDC" as const,
-    payer: "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
-    recipient: "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
-    approver: "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+    payer: ALICE_ADDR,
+    recipient: BOB_ADDR,
+    approver: ALICE_ADDR,
     title: "Website Redesign & Brand Assets",
     description: "Design responsive components and export Figma tokens",
     deliverables: ["Figma source", "React component kit"],
     condition: "Payer approves submitted Figma design and code",
     cancellationTerms: "Mutual cancellation permitted prior to review",
     deadline: "2026-11-20T00:00:00.000Z",
-    contractId: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    contractId: "PENDING_TRUSTLESS_WORK_INTEGRATION",
     domain: "trustflow.stellar.escrow.v1",
     network: "testnet" as const,
     version: 1,
   };
 
-  // Same terms, but keys defined in completely reversed/jumbled order
   const sampleTermsJumbled = {
     version: 1,
     title: "Website Redesign & Brand Assets",
-    recipient: "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
+    recipient: BOB_ADDR,
     network: "testnet" as const,
-    payer: "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+    payer: ALICE_ADDR,
     domain: "trustflow.stellar.escrow.v1",
     deliverables: ["Figma source", "React component kit"],
     description: "Design responsive components and export Figma tokens",
     deadline: "2026-11-20T00:00:00.000Z",
-    contractId: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+    contractId: "PENDING_TRUSTLESS_WORK_INTEGRATION",
     condition: "Payer approves submitted Figma design and code",
     cancellationTerms: "Mutual cancellation permitted prior to review",
     asset: "USDC" as const,
-    approver: "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+    approver: ALICE_ADDR,
     amount: "500.00",
   };
 
@@ -59,171 +80,138 @@ describe("TrustFlow Canonical Hash & Counter-Party Acceptance Suite", () => {
       const canonical1 = canonicalizeJson(sampleTerms1);
       const canonical2 = canonicalizeJson(sampleTermsJumbled);
 
-      expect(canonical1).toBe(canonical2);
-      expect(canonical1.startsWith('{"amount":"500.00"')).toBe(true);
+      assert.strictEqual(canonical1, canonical2);
+      assert.strictEqual(canonical1.startsWith('{"amount":"500.00"'), true);
     });
 
     it("computes identical SHA-256 hash regardless of object key order", async () => {
       const hash1 = await computeCanonicalHash(sampleTerms1);
       const hash2 = await computeCanonicalHash(sampleTermsJumbled);
 
-      expect(hash1).toBe(hash2);
-      expect(hash1).toHaveLength(64);
-      expect(/^[0-9a-f]{64}$/.test(hash1)).toBe(true);
+      assert.strictEqual(hash1, hash2);
+      assert.strictEqual(hash1.length, 64);
+      assert.ok(/^[0-9a-f]{64}$/.test(hash1));
     });
 
     it("produces a distinct hash when any term is modified", async () => {
       const hashOriginal = await computeCanonicalHash(sampleTerms1);
-      
-      const tamperedTerms = {
+      const hashTampered = await computeCanonicalHash({
         ...sampleTerms1,
-        amount: "500.01", // Slight modification
-      };
-      const hashTampered = await computeCanonicalHash(tamperedTerms);
+        amount: "500.01",
+      });
 
-      expect(hashOriginal).not.toBe(hashTampered);
+      assert.notStrictEqual(hashOriginal, hashTampered);
     });
   });
 
-  describe("Counter-Party Acceptance Flow via Backend Controller", () => {
-    const testAgreementId = `agr-test-${Date.now()}`;
+  describe("Counter-Party Acceptance Flow via Isolated HTTP API", () => {
+    let tempDir: string;
+    let baseUrl: string;
+    let closeServer: () => Promise<void>;
+    let aliceToken: string;
+    let bobToken: string;
+    let agreementId: string;
     let canonicalHash: string;
 
     beforeEach(async () => {
-      canonicalHash = await computeCanonicalHash(sampleTerms1);
-      const initialAgreement: AgreementRecord = {
-        id: testAgreementId,
-        transactionType: "WORK",
-        title: sampleTerms1.title,
-        description: sampleTerms1.description,
-        terms: sampleTerms1,
-        canonicalHash,
-        version: 1,
-        status: "CREATED",
-        cancelRequest: "NONE",
-        payerAccepted: true,
-        recipientAccepted: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        activity: [
-          {
-            id: `act-1`,
-            agreementId: testAgreementId,
-            timestamp: new Date().toISOString(),
-            actor: sampleTerms1.payer,
-            actorRole: "PAYER",
-            type: "CREATED",
-            title: "Agreement Created & Accepted by Payer",
-            description: "Initial terms drafted.",
-          },
-        ],
-      };
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "trustflow-accept-test-"));
+      const srv = await startTestServer(tempDir);
+      baseUrl = srv.baseUrl;
+      closeServer = srv.close;
 
-      agreementService.save(initialAgreement as any);
+      aliceToken = await loginSandbox(baseUrl, "alice");
+      bobToken = await loginSandbox(baseUrl, "bob");
+
+      const createRes = await fetch(`${baseUrl}/api/agreements`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${aliceToken}`,
+        },
+        body: JSON.stringify({
+          transactionType: "WORK",
+          terms: sampleTerms1,
+        }),
+      });
+      assert.strictEqual(createRes.status, 201);
+      const created = (await createRes.json()) as any;
+      agreementId = created.id;
+      canonicalHash = created.canonicalHash;
     });
 
-    it("successfully records recipient acceptance when canonical hash matches", async () => {
-      let responseStatus = 200;
-      let responseBody: any = null;
+    afterEach(async () => {
+      await closeServer();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
 
-      const mockReq: any = {
-        params: { id: testAgreementId },
-        body: {
+    it("records recipient acceptance when authenticated as recipient and canonical hash matches", async () => {
+      const acceptRes = await fetch(`${baseUrl}/api/agreements/${agreementId}/accept`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${bobToken}`,
+        },
+        body: JSON.stringify({
           role: "RECIPIENT",
-          actor: sampleTerms1.recipient,
-          canonicalHash: canonicalHash,
-        },
-      };
+          canonicalHash,
+          expectedVersion: 1,
+        }),
+      });
 
-      const mockRes: any = {
-        status: (code: number) => {
-          responseStatus = code;
-          return mockRes;
-        },
-        json: (data: any) => {
-          responseBody = data;
-          return mockRes;
-        },
-      };
+      assert.strictEqual(acceptRes.status, 200);
+      const body = (await acceptRes.json()) as any;
+      assert.strictEqual(body.recipientAccepted, true);
+      assert.strictEqual(body.payerAccepted, true);
+      assert.strictEqual(body.status, "READY_FOR_FUNDING");
+      assert.strictEqual(body.version, 2);
 
-      await handleAcceptAgreement(mockReq, mockRes);
-
-      expect(responseStatus).toBe(200);
-      expect(responseBody).not.toBeNull();
-      expect(responseBody.recipientAccepted).toBe(true);
-      expect(responseBody.payerAccepted).toBe(true);
-      // Both parties have accepted -> status must transition to READY_FOR_FUNDING
-      expect(responseBody.status).toBe("READY_FOR_FUNDING");
-
-      // Verify activity log includes ACCEPTED event
-      const latestActivity = responseBody.activity[responseBody.activity.length - 1];
-      expect(latestActivity.type).toBe("ACCEPTED");
-      expect(latestActivity.actorRole).toBe("RECIPIENT");
+      const latestActivity = body.activity[body.activity.length - 1];
+      assert.strictEqual(latestActivity.type, "ACCEPTED");
+      assert.strictEqual(latestActivity.actorRole, "RECIPIENT");
     });
 
     it("rejects acceptance if canonical hash does not match (tampering protection)", async () => {
-      let responseStatus = 200;
-      let responseBody: any = null;
-
-      const mockReq: any = {
-        params: { id: testAgreementId },
-        body: {
+      const acceptRes = await fetch(`${baseUrl}/api/agreements/${agreementId}/accept`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${bobToken}`,
+        },
+        body: JSON.stringify({
           role: "RECIPIENT",
-          actor: sampleTerms1.recipient,
-          canonicalHash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", // Fake/tampered hash
-        },
-      };
+          canonicalHash: "f".repeat(64),
+          expectedVersion: 1,
+        }),
+      });
 
-      const mockRes: any = {
-        status: (code: number) => {
-          responseStatus = code;
-          return mockRes;
-        },
-        json: (data: any) => {
-          responseBody = data;
-          return mockRes;
-        },
-      };
+      assert.strictEqual(acceptRes.status, 400);
+      const errBody = (await acceptRes.json()) as any;
+      assert.ok(String(errBody.error).includes("Canonical hash mismatch"));
 
-      await handleAcceptAgreement(mockReq, mockRes);
-
-      expect(responseStatus).toBe(400);
-      expect(responseBody.error).toContain("Canonical hash mismatch");
-
-      // Verify database record was NOT updated
-      const agreement = agreementService.getById(testAgreementId);
-      expect(agreement?.recipientAccepted).toBe(false);
-      expect(agreement?.status).toBe("CREATED");
+      const getRes = await fetch(`${baseUrl}/api/agreements/${agreementId}`, {
+        headers: { Authorization: `Bearer ${bobToken}` },
+      });
+      const latest = (await getRes.json()) as any;
+      assert.strictEqual(latest.recipientAccepted, false);
+      assert.strictEqual(latest.status, "CREATED");
     });
 
     it("rejects acceptance for an invalid role", async () => {
-      let responseStatus = 200;
-      let responseBody: any = null;
-
-      const mockReq: any = {
-        params: { id: testAgreementId },
-        body: {
+      const acceptRes = await fetch(`${baseUrl}/api/agreements/${agreementId}/accept`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${bobToken}`,
+        },
+        body: JSON.stringify({
           role: "SPECTATOR",
-          actor: "G_UNKNOWN",
           canonicalHash,
-        },
-      };
+        }),
+      });
 
-      const mockRes: any = {
-        status: (code: number) => {
-          responseStatus = code;
-          return mockRes;
-        },
-        json: (data: any) => {
-          responseBody = data;
-          return mockRes;
-        },
-      };
-
-      await handleAcceptAgreement(mockReq, mockRes);
-
-      expect(responseStatus).toBe(400);
-      expect(responseBody.error).toContain("Invalid role");
+      assert.strictEqual(acceptRes.status, 400);
+      const errBody = (await acceptRes.json()) as any;
+      assert.ok(String(errBody.error).includes("Invalid role"));
     });
   });
 });

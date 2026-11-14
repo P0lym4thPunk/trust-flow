@@ -3,7 +3,6 @@ import { motion, useReducedMotion } from "motion/react";
 import {
   CheckCircle2,
   Clock,
-  ArrowRight,
   ExternalLink,
   Send,
   ArrowLeft,
@@ -25,6 +24,7 @@ import {
   getToneClasses,
   isSimulatedHash,
 } from "../lib/agreementStatus";
+import { useAuth } from "../lib/auth/AuthContext";
 
 interface AgreementDetailRoomProps {
   agreement: AgreementRecord;
@@ -40,6 +40,7 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
   onBack,
 }) => {
   const shouldReduceMotion = useReducedMotion();
+  const { getAuthHeaders } = useAuth();
   const [fulfilmentInput, setFulfilmentInput] = useState("");
   const [submittingFulfilment, setSubmittingFulfilment] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -89,333 +90,152 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
     agreement.status === "FULFILMENT_SUBMITTED" ||
     agreement.status === "APPROVED";
 
-  // 1. Counterparty Acceptance Handler (supports both recipient accepting payer's agreement & payer accepting freelancer's request)
-  const handleAcceptAgreement = async () => {
-    setFormError(null);
-    setActionLoading(true);
-    setStatusMessage("Recording your acceptance of these terms...");
-    const acceptingAsPayer = isPayer && !agreement.payerAccepted;
+  const isRealTxHash = (hash?: string): boolean =>
+    Boolean(hash && !agreement.isSandbox && !isSimulatedHash(hash) && /^[a-fA-F0-9]{64}$/.test(hash));
 
-    setTimeout(() => {
-      const updated: AgreementRecord = {
-        ...agreement,
-        payerAccepted: acceptingAsPayer ? true : agreement.payerAccepted,
-        recipientAccepted: !acceptingAsPayer ? true : agreement.recipientAccepted,
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: acceptingAsPayer ? "PAYER" : "RECIPIENT",
-            type: "ACCEPTED",
-            title: acceptingAsPayer ? "Accepted by client" : "Accepted by recipient",
-            description: `${acceptingAsPayer ? "Client" : "Recipient"} ${formatAddress(
-              currentAccount.address
-            )} accepted the agreement terms.`,
-          },
-        ],
-      };
-      onUpdateAgreement(updated);
-      setActionLoading(false);
-      setStatusMessage("Terms accepted. Ready for the client to secure funds.");
-    }, 650);
-  };
-
-  // 2. Payer Add Money Handler (Test Workspace Simulation)
-  const handleFundEscrow = async () => {
+  const runTransition = async (
+    endpoint: string,
+    body: Record<string, unknown>,
+    pendingMsg: string,
+    successMsg: string
+  ): Promise<boolean> => {
     setFormError(null);
-    setActionLoading(true);
-    setStatusMessage("Recording test funding in workspace simulation...");
-    setTimeout(() => {
-      const txHash = `tf-tx-${Math.random().toString(16).slice(2, 10)}${Math.random()
-        .toString(16)
-        .slice(2, 10)}`;
-      const updated: AgreementRecord = {
-        ...agreement,
-        status: "FUNDED",
-        fundedAt: new Date().toISOString(),
-        fundingTxHash: txHash,
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: "PAYER",
-            type: "FUNDED",
-            title: "Funds secured (test simulation)",
-            description: `${agreement.terms.amount} ${agreement.terms.asset} marked as funded in test workspace simulation.`,
-            txHash,
+    setStatusMessage(pendingMsg);
+    try {
+      const res = await fetch(
+        `/api/agreements/${encodeURIComponent(agreement.id)}/${endpoint}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders(),
           },
-        ],
-      };
-      onUpdateAgreement(updated);
-      setActionLoading(false);
-      setStatusMessage(
-        "Marked as funded in test workspace simulation (no real funds moved). Recipient can now submit work."
+          body: JSON.stringify({
+            ...body,
+            expectedVersion: agreement.version,
+          }),
+        }
       );
-    }, 750);
+
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatusMessage(null);
+        setFormError(payload.error || `Action failed (${res.status}).`);
+        return false;
+      }
+
+      onUpdateAgreement(payload as AgreementRecord);
+      setStatusMessage(successMsg);
+      return true;
+    } catch (err: any) {
+      setStatusMessage(null);
+      setFormError(err?.message || "Unable to reach the server. Your agreement was not modified.");
+      return false;
+    }
   };
 
-  // 3. Recipient Work Submission Handler
+  // 1. Counterparty Acceptance Handler
+  const handleAcceptAgreement = async () => {
+    setActionLoading(true);
+    const acceptingAsPayer = isPayer && !agreement.payerAccepted;
+    await runTransition(
+      "accept",
+      {
+        role: acceptingAsPayer ? "PAYER" : "RECIPIENT",
+        canonicalHash: agreement.canonicalHash,
+      },
+      "Recording your acceptance of these terms...",
+      "Terms accepted. Both parties' consent is recorded on the agreement."
+    );
+    setActionLoading(false);
+  };
+
+  // 2. Recipient Work Submission Handler
   const handleSubmitFulfilment = async () => {
     if (!fulfilmentInput.trim()) {
       setFormError("Please add delivery notes or a link to your completed work before submitting.");
       return;
     }
-    setFormError(null);
     setSubmittingFulfilment(true);
-    setStatusMessage("Submitting your work for review...");
-    setTimeout(() => {
-      const updated: AgreementRecord = {
-        ...agreement,
-        status: "FULFILMENT_SUBMITTED",
-        fulfilmentNotes: fulfilmentInput.trim(),
-        fulfilmentHash: `sub-${Math.random().toString(16).slice(2, 14)}`,
-        rejectionReason: undefined,
-        rejectionReasonHash: undefined,
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: "RECIPIENT",
-            type: "FULFILMENT_SUBMITTED",
-            title: "Work submitted for review",
-            description: fulfilmentInput.trim(),
-          },
-        ],
-      };
-      onUpdateAgreement(updated);
+    const ok = await runTransition(
+      "fulfil",
+      { notes: fulfilmentInput.trim() },
+      "Submitting your work for review...",
+      "Work submitted. Waiting for reviewer approval."
+    );
+    if (ok) {
       setFulfilmentInput("");
-      setSubmittingFulfilment(false);
-      setStatusMessage("Work submitted. Waiting for reviewer approval.");
-    }, 650);
+    }
+    setSubmittingFulfilment(false);
   };
 
-  // 4A. Approver Review & Approval Handler
+  // 3A. Approver Review & Approval Handler
   const handleApproveCondition = async () => {
-    setFormError(null);
     setActionLoading(true);
-    setStatusMessage("Approving the submitted work...");
-    setTimeout(() => {
-      const updated: AgreementRecord = {
-        ...agreement,
-        status: "APPROVED",
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: "APPROVER",
-            type: "APPROVED",
-            title: "Work approved",
-            description: "Conditions satisfied. Ready to release payment.",
-          },
-        ],
-      };
-      onUpdateAgreement(updated);
-      setActionLoading(false);
-      setStatusMessage("Work approved. Ready for final release.");
-    }, 650);
+    await runTransition(
+      "approve",
+      {},
+      "Approving the submitted work...",
+      "Work approved. Ready for Phase 2 on-chain settlement."
+    );
+    setActionLoading(false);
   };
 
-  // 4B. Approver Request Changes / Reject Submitted Work Handler
+  // 3B. Approver Request Changes / Reject Submitted Work Handler
   const handleRejectSubmission = async () => {
     if (!rejectionInput.trim()) {
       setFormError("Please explain briefly what needs to be revised.");
       return;
     }
-    setFormError(null);
     setActionLoading(true);
-    setStatusMessage("Sending revision feedback to the recipient...");
-    setTimeout(() => {
-      const reason = rejectionInput.trim();
-      const updated: AgreementRecord = {
-        ...agreement,
-        status: "FUNDED",
-        rejectionReason: reason,
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: "APPROVER",
-            type: "REJECTED",
-            title: "Changes requested",
-            description: reason,
-          },
-        ],
-      };
-      onUpdateAgreement(updated);
+    const ok = await runTransition(
+      "request-changes",
+      { reason: rejectionInput.trim() },
+      "Sending revision feedback to the recipient...",
+      "Revision request recorded."
+    );
+    if (ok) {
       setRejectionInput("");
       setShowRejectBox(false);
-      setActionLoading(false);
-      setStatusMessage("Revision request recorded. Funds remain held while work is updated.");
-    }, 650);
+    }
+    setActionLoading(false);
   };
 
-  // 5. Release Funds Handler (Test Workspace Simulation)
-  const handleReleaseFunds = async () => {
-    setFormError(null);
-    setActionLoading(true);
-    setStatusMessage("Recording payment release in test workspace simulation...");
-    setTimeout(() => {
-      const txHash = `tf-rel-${Math.random().toString(16).slice(2, 10)}${Math.random()
-        .toString(16)
-        .slice(2, 10)}`;
-      const updated: AgreementRecord = {
-        ...agreement,
-        status: "RELEASED",
-        completedAt: new Date().toISOString(),
-        releaseTxHash: txHash,
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: isPayer ? "PAYER" : isRecipient ? "RECIPIENT" : "APPROVER",
-            type: "RELEASED",
-            title: "Payment released (test simulation)",
-            description: `${agreement.terms.amount} ${agreement.terms.asset} marked as released in test workspace simulation.`,
-            txHash,
-          },
-        ],
-      };
-      onUpdateAgreement(updated);
-      setActionLoading(false);
-      setStatusMessage(
-        "Recorded as completed in test workspace simulation (no real funds moved)."
-      );
-    }, 750);
-  };
-
-  // 6. Cancellation / Dispute Request Handlers
+  // 4. Cancellation / Dispute Request Handlers
   const handleRequestCancellation = async () => {
-    setFormError(null);
     setActionLoading(true);
-    const requestSide = isPayer ? "REQUESTED_BY_PAYER" : "REQUESTED_BY_RECIPIENT";
-    setStatusMessage("Recording cancellation request...");
-    setTimeout(() => {
-      const updated: AgreementRecord = {
-        ...agreement,
-        cancelRequest: requestSide,
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: isPayer ? "PAYER" : "RECIPIENT",
-            type: "CANCEL_REQUESTED",
-            title: "Cancellation requested",
-            description: `${isPayer ? "Client" : "Recipient"} requested mutual cancellation. Funds stay held while unresolved.`,
-          },
-        ],
-      };
-      onUpdateAgreement(updated);
+    const ok = await runTransition(
+      "cancel-request",
+      {},
+      "Recording cancellation request...",
+      "Cancellation requested. Waiting for the other party to confirm or resolve."
+    );
+    if (ok) {
       setShowCancelConfirm(false);
-      setActionLoading(false);
-      setStatusMessage("Cancellation requested. Waiting for the other party to confirm or resolve.");
-    }, 550);
+    }
+    setActionLoading(false);
   };
 
   const handleWithdrawCancellation = async () => {
-    setFormError(null);
     setActionLoading(true);
-    setStatusMessage("Withdrawing cancellation request...");
-    setTimeout(() => {
-      const updated: AgreementRecord = {
-        ...agreement,
-        cancelRequest: "NONE",
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: isPayer ? "PAYER" : "RECIPIENT",
-            type: "CANCEL_CONFIRMED",
-            title: "Cancellation request withdrawn",
-            description: "Both sides can continue with the agreement.",
-          },
-        ],
-      };
-      onUpdateAgreement(updated);
-      setActionLoading(false);
-      setStatusMessage("Cancellation request withdrawn. Agreement continues.");
-    }, 550);
+    await runTransition(
+      "cancel-withdraw",
+      {},
+      "Withdrawing cancellation request...",
+      "Cancellation request withdrawn. Agreement continues."
+    );
+    setActionLoading(false);
   };
 
   const handleConfirmCancellation = async () => {
-    setFormError(null);
     setActionLoading(true);
-    setStatusMessage(
-      isFundedStage
-        ? "Recording simulated refund to client..."
-        : "Cancelling agreement..."
+    await runTransition(
+      "cancel-confirm",
+      {},
+      isFundedStage ? "Checking cancellation eligibility..." : "Cancelling agreement...",
+      "Agreement cancelled."
     );
-    setTimeout(() => {
-      const refHash = isFundedStage
-        ? `tf-ref-${Math.random().toString(16).slice(2, 10)}${Math.random()
-            .toString(16)
-            .slice(2, 10)}`
-        : undefined;
-      const updated: AgreementRecord = {
-        ...agreement,
-        status: isFundedStage ? "REFUNDED" : "CANCELLED",
-        cancelRequest: "NONE",
-        refundTxHash: refHash,
-        completedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        activity: [
-          ...agreement.activity,
-          {
-            id: `act-${Date.now()}`,
-            agreementId: agreement.id,
-            timestamp: new Date().toISOString(),
-            actor: currentAccount.address,
-            actorRole: isPayer ? "PAYER" : "RECIPIENT",
-            type: isFundedStage ? "REFUNDED" : "CANCELLED",
-            title: isFundedStage
-              ? "Refund recorded (test simulation)"
-              : "Agreement cancelled",
-            description: isFundedStage
-              ? "Mutual cancellation confirmed. Refund recorded in test workspace simulation."
-              : "Mutual cancellation confirmed before funding.",
-            txHash: refHash,
-          },
-        ],
-      };
-      onUpdateAgreement(updated);
-      setActionLoading(false);
-      setStatusMessage(
-        isFundedStage
-          ? "Mutual cancellation confirmed. Refund recorded in test simulation."
-          : "Agreement cancelled."
-      );
-    }, 650);
+    setActionLoading(false);
   };
 
   const canCurrentUserAccept =
@@ -674,7 +494,7 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
           </div>
         )}
 
-        {/* Stage 1B: Payer Needs to Add Money */}
+        {/* Stage 1B: Both Accepted — On-chain Funding Scheduled for Phase 2 */}
         {isPreFundingCreated && bothAccepted && (
           <div className="space-y-3">
             <div>
@@ -682,38 +502,18 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
                 Terms agreed · Ready for funding
               </h3>
               <p className="text-xs text-[var(--tf-muted)] mt-1 leading-relaxed">
-                Secure {agreement.terms.amount} {agreement.terms.asset} under the agreed terms so
-                work can begin.
+                Both parties have accepted {agreement.terms.amount} {agreement.terms.asset}. Terms
+                are locked against silent changes.
               </p>
             </div>
 
-            {isPayer ? (
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={handleFundEscrow}
-                  disabled={actionLoading}
-                  className="px-5 min-h-[42px] text-xs font-semibold text-slate-950 bg-[#F5D03A] hover:bg-[#E7BF24] rounded-xl transition-colors inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  {actionLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  )}
-                  <span>
-                    Fund {agreement.terms.amount} {agreement.terms.asset}
-                  </span>
-                </button>
-                <p className="text-[11px] text-[var(--tf-muted)]">
-                  Test workspace simulation — marks this agreement funded without moving real
-                  money.
-                </p>
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--tf-muted)]">
-                Waiting for client ({formatAddress(agreement.terms.payer)}) to fund the agreement.
-              </p>
-            )}
+            <div className="p-3.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] text-xs text-[var(--tf-muted)] leading-relaxed">
+              On-chain escrow funding and Trustless Work contract deployment for{" "}
+              <span className="font-medium text-slate-900 dark:text-white">
+                {agreement.terms.amount} {agreement.terms.asset}
+              </span>{" "}
+              are scheduled for Phase 2. No funds have moved on-chain in Phase 1.
+            </div>
           </div>
         )}
 
@@ -861,39 +661,30 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
           </div>
         )}
 
-        {/* Stage 4: Release Payment */}
+        {/* Stage 4: Approved — On-chain Release Scheduled for Phase 2 */}
         {agreement.status === "APPROVED" && (
           <div className="space-y-3">
             <div>
               <h3 className="font-semibold text-sm text-slate-950 dark:text-white">
-                Approved · Release pending
+                Approved · On-chain settlement pending Phase 2
               </h3>
               <p className="text-xs text-[var(--tf-muted)] mt-1 leading-relaxed">
-                The work is approved. Complete release of {agreement.terms.amount}{" "}
-                {agreement.terms.asset} to {formatAddress(agreement.terms.recipient)}.
+                The work is approved by {formatAddress(agreement.terms.approver)}.
               </p>
             </div>
 
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={handleReleaseFunds}
-                disabled={actionLoading}
-                className="px-5 min-h-[42px] text-xs font-semibold text-slate-950 bg-[#F5D03A] hover:bg-[#E7BF24] rounded-xl transition-colors inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                {actionLoading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <ArrowRight className="w-3.5 h-3.5" />
-                )}
-                <span>
-                  Release {agreement.terms.amount} {agreement.terms.asset}
-                </span>
-              </button>
-              <p className="text-[11px] text-[var(--tf-muted)]">
-                Test workspace simulation — records completion without moving real funds.
+            {isApprover ? (
+              <div className="p-3.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] text-xs text-[var(--tf-muted)] leading-relaxed">
+                On-chain payment release of {agreement.terms.amount} {agreement.terms.asset} to{" "}
+                {formatAddress(agreement.terms.recipient)} via Trustless Work is scheduled for Phase
+                2.
+              </div>
+            ) : (
+              <p className="text-xs text-[var(--tf-muted)]">
+                Waiting for reviewer ({formatAddress(agreement.terms.approver)}) on-chain settlement
+                in Phase 2.
               </p>
-            </div>
+            )}
           </div>
         )}
 
@@ -1166,11 +957,7 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
             {agreement.fundingTxHash && (
               <div>
                 <span>Funding reference: </span>
-                {isSimulatedHash(agreement.fundingTxHash) ? (
-                  <span className="text-slate-900 dark:text-white">
-                    {agreement.fundingTxHash} (test simulation — not on-chain)
-                  </span>
-                ) : (
+                {isRealTxHash(agreement.fundingTxHash) ? (
                   <a
                     href={`https://stellar.expert/explorer/testnet/tx/${agreement.fundingTxHash}`}
                     target="_blank"
@@ -1180,17 +967,17 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
                     {agreement.fundingTxHash.slice(0, 20)}...
                     <ExternalLink className="w-3 h-3" />
                   </a>
+                ) : (
+                  <span className="text-slate-900 dark:text-white">
+                    {agreement.fundingTxHash} (not on-chain)
+                  </span>
                 )}
               </div>
             )}
             {agreement.releaseTxHash && (
               <div>
                 <span>Release reference: </span>
-                {isSimulatedHash(agreement.releaseTxHash) ? (
-                  <span className="text-slate-900 dark:text-white">
-                    {agreement.releaseTxHash} (test simulation — not on-chain)
-                  </span>
-                ) : (
+                {isRealTxHash(agreement.releaseTxHash) ? (
                   <a
                     href={`https://stellar.expert/explorer/testnet/tx/${agreement.releaseTxHash}`}
                     target="_blank"
@@ -1200,17 +987,17 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
                     {agreement.releaseTxHash.slice(0, 20)}...
                     <ExternalLink className="w-3 h-3" />
                   </a>
+                ) : (
+                  <span className="text-slate-900 dark:text-white">
+                    {agreement.releaseTxHash} (not on-chain)
+                  </span>
                 )}
               </div>
             )}
             {agreement.refundTxHash && (
               <div>
                 <span>Refund reference: </span>
-                {isSimulatedHash(agreement.refundTxHash) ? (
-                  <span className="text-slate-900 dark:text-white">
-                    {agreement.refundTxHash} (test simulation — not on-chain)
-                  </span>
-                ) : (
+                {isRealTxHash(agreement.refundTxHash) ? (
                   <a
                     href={`https://stellar.expert/explorer/testnet/tx/${agreement.refundTxHash}`}
                     target="_blank"
@@ -1220,6 +1007,10 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
                     {agreement.refundTxHash.slice(0, 20)}...
                     <ExternalLink className="w-3 h-3" />
                   </a>
+                ) : (
+                  <span className="text-slate-900 dark:text-white">
+                    {agreement.refundTxHash} (not on-chain)
+                  </span>
                 )}
               </div>
             )}

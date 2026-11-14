@@ -1,18 +1,20 @@
 import { Router } from "express";
-import {
-  handlePrepareEscrow,
-  handleConfirmFunding,
-  handleSubmitFulfilment,
-  handleApproveAndRelease,
-  handleVerifyTx,
-} from "../controllers/escrow.controller.js";
+import { StellarRpcAdapter } from "../adapters/stellarRpc.adapter.js";
+import { createEscrowController } from "../controllers/escrow.controller.js";
+import { createAuthMiddleware } from "../middleware/auth.middleware.js";
+import { AuthService } from "../services/auth.service.js";
 
-const router = Router();
+export function createEscrowRoutes(stellarRpc: StellarRpcAdapter, authService: AuthService) {
+  const router = Router();
+  const controller = createEscrowController(stellarRpc);
+  const requireAuth = createAuthMiddleware(authService);
 
-router.post("/prepare", handlePrepareEscrow);
-router.post("/:id/fund", handleConfirmFunding);
-router.post("/:id/fulfil", handleSubmitFulfilment);
-router.post("/:id/release", handleApproveAndRelease);
-router.get("/tx/:hash/verify", handleVerifyTx);
+  router.use(requireAuth);
+  router.post("/prepare", controller.handlePhase2Pending);
+  router.post("/:id/fund", controller.handlePhase2Pending);
+  router.post("/:id/fulfil", controller.handlePhase2Pending);
+  router.post("/:id/release", controller.handlePhase2Pending);
+  router.get("/tx/:hash/verify", controller.handleVerifyTx);
 
-export default router;
+  return router;
+}

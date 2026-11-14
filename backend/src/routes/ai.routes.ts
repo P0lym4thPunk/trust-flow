@@ -1,9 +1,18 @@
 import { Router } from "express";
-import { handleDraft, handleCheck } from "../controllers/ai.controller.js";
+import { createAiController } from "../controllers/ai.controller.js";
+import { createAuthMiddleware } from "../middleware/auth.middleware.js";
+import { AiService } from "../services/ai.service.js";
+import { AuthService } from "../services/auth.service.js";
 
-const router = Router();
+export function createAiRoutes(aiService: AiService, authService: AuthService) {
+  const router = Router();
+  const controller = createAiController(aiService);
+  const requireAuth = createAuthMiddleware(authService);
 
-router.post("/draft", handleDraft);
-router.post("/check", handleCheck);
+  router.use(requireAuth);
+  router.get("/info", controller.getInfo);
+  router.post("/draft", controller.handleDraft);
+  router.post("/check", controller.handleCheck);
 
-export default router;
+  return router;
+}

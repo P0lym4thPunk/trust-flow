@@ -1,0 +1,16 @@
+{
+  "sandbox-alice": {
+    "id": "sandbox-alice",
+    "email": "alice@sandbox.trustflow.local",
+    "displayName": "Alice (Client / Payer)",
+    "avatar": "👩‍💼",
+    "provider": "dev_sandbox",
+    "authVerified": true,
+    "providerSubject": "sandbox-alice",
+    "stellarAddress": "GC2YDKW52O7MJ62JGPZGQSKWDN6YUHXU3M32QJQ6DFRBATWL6RIHUOP6",
+    "walletCustody": "dev_sandbox",
+    "isSandbox": true,
+    "createdAt": "2026-11-13T22:33:27.916Z",
+    "lastLoginAt": "2026-11-13T22:33:27.916Z"
+  }
+}

@@ -1,30 +1,29 @@
 /**
  * TrustFlow Backend Types
- * Off-chain application models, API contracts, and integration interfaces.
+ * Unified Phase 1 domain, authentication, repository, and API contracts.
  */
 
 export type TransactionType = "WORK" | "PROTECTED_PAYMENT" | "CONDITIONAL_DISBURSEMENT";
 
 export type AgreementStatus =
   | "DRAFT"
-  | "AWAITING_RECIPIENT_ACCEPTANCE"
-  | "AWAITING_PAYER_ACCEPTANCE"
+  | "CREATED"
   | "READY_FOR_FUNDING"
-  | "FUNDING_PENDING"
   | "FUNDED"
   | "FULFILMENT_SUBMITTED"
-  | "AWAITING_APPROVAL"
-  | "RELEASE_PENDING"
-  | "COMPLETED"
-  | "CANCEL_REQUESTED"
-  | "CANCELLED"
-  | "REFUND_PENDING"
+  | "APPROVED"
+  | "RELEASED"
   | "REFUNDED"
+  | "CANCELLED"
   | "DISPUTED";
+
+export type CancelRequestState = "NONE" | "REQUESTED_BY_PAYER" | "REQUESTED_BY_RECIPIENT";
+
+export type AssetSymbol = "XLM" | "USDC";
 
 export interface AgreementTerms {
   amount: string;
-  asset: "USDC" | "XLM";
+  asset: AssetSymbol;
   payer: string;
   recipient: string;
   approver: string;
@@ -34,9 +33,9 @@ export interface AgreementTerms {
   condition: string;
   cancellationTerms: string;
   deadline: string;
-  contractId?: string;
-  domain?: string;
-  network?: "testnet" | "mainnet";
+  contractId: string;
+  domain: string;
+  network: string;
   version: number;
 }
 
@@ -49,15 +48,17 @@ export interface ActivityEvent {
   type:
     | "CREATED"
     | "UPDATED"
+    | "CHANGES_REQUESTED"
     | "ACCEPTED"
-    | "FUNDING_INITIATED"
     | "FUNDED"
     | "FULFILMENT_SUBMITTED"
     | "APPROVED"
+    | "REJECTED"
     | "RELEASED"
+    | "REFUNDED"
     | "CANCEL_REQUESTED"
-    | "CANCELLED"
-    | "REFUNDED";
+    | "CANCEL_CONFIRMED"
+    | "CANCELLED";
   title: string;
   description: string;
   txHash?: string;
@@ -66,38 +67,82 @@ export interface ActivityEvent {
 
 export interface AgreementRecord {
   id: string;
-  escrowId?: number | string;
+  escrowId?: number;
   trustlessWorkEscrowId?: string;
   transactionType: TransactionType;
   title: string;
   description: string;
+  terms: AgreementTerms;
+  canonicalHash: string;
+  version: number;
   status: AgreementStatus;
-  cancelRequest: "NONE" | "BY_PAYER" | "BY_RECIPIENT" | "MUTUAL_AGREED";
+  cancelRequest: CancelRequestState;
   payerAccepted: boolean;
   recipientAccepted: boolean;
-  version: number;
-  canonicalHash: string;
-  terms: AgreementTerms;
+  fulfilmentHash?: string;
+  fulfilmentNotes?: string;
+  fulfilmentEvidenceUrl?: string;
+  rejectionReasonHash?: string;
+  rejectionReason?: string;
+  fundingTxHash?: string;
+  releaseTxHash?: string;
+  refundTxHash?: string;
+  createdByUserId?: string;
+  isSandbox?: boolean;
   createdAt: string;
   updatedAt: string;
   fundedAt?: string;
-  fundingTxHash?: string;
   completedAt?: string;
-  releaseTxHash?: string;
-  evidence?: {
-    submittedAt: string;
-    description: string;
-    links: string[];
-  };
   activity: ActivityEvent[];
 }
 
-export interface UserProfile {
+export type AuthProvider = "email_otp" | "google" | "privy" | "dev_sandbox";
+export type WalletCustody = "none" | "privy_embedded" | "external_wallet" | "dev_sandbox";
+
+export interface UserRecord {
   id: string;
-  stellarAddress: string;
-  email?: string;
+  email: string | null;
   displayName: string;
-  avatarUrl?: string;
+  avatar: string;
+  provider: AuthProvider;
+  authVerified: boolean;
+  providerSubject?: string;
+  stellarAddress: string | null;
+  walletCustody: WalletCustody;
+  isSandbox: boolean;
   createdAt: string;
-  authProvider: "stellar-wallet" | "pollar-privy" | "simulated";
+  lastLoginAt: string;
+}
+
+export interface SessionRecord {
+  token: string;
+  userId: string;
+  provider: AuthProvider;
+  isSandbox: boolean;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface OtpRecord {
+  email: string;
+  codeHash: string;
+  salt: string;
+  expiresAt: number;
+  attempts: number;
+  maxAttempts: number;
+  createdAt: number;
+}
+
+export class AppError extends Error {
+  public readonly statusCode: number;
+  public readonly code: string;
+  public readonly details?: unknown;
+
+  constructor(statusCode: number, code: string, message: string, details?: unknown) {
+    super(message);
+    this.name = "AppError";
+    this.statusCode = statusCode;
+    this.code = code;
+    this.details = details;
+  }
 }

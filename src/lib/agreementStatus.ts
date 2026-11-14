@@ -141,15 +141,14 @@ export function getAgreementVisualStatus(agreement: AgreementRecord): AgreementV
   }
 
   // CREATED or READY_FOR_FUNDING
-  const rawStatus = agreement.status as string;
   if (
-    rawStatus === "READY_FOR_FUNDING" ||
+    agreement.status === "READY_FOR_FUNDING" ||
     (agreement.payerAccepted && agreement.recipientAccepted)
   ) {
     return {
       key: "awaiting_funding",
       label: "Accepted · Awaiting funding",
-      summary: "Both parties accepted the terms. Waiting for the client to fund the agreement.",
+      summary: "Both parties accepted the terms. On-chain funding is scheduled for Phase 2.",
       tone: "amber",
       isSimulatedTx,
       isDeadlinePassed,

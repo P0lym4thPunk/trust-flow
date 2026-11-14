@@ -12,9 +12,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
   const {
     isAuthModalOpen,
     closeAuthModal,
+    capabilities,
+    isPrivyConfigured,
     sendOtpCode,
     verifyOtpCode,
     loginWithGoogle,
+    enterSandbox,
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<"email" | "google">("email");
@@ -23,14 +26,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
   const [step, setStep] = useState<"input_email" | "enter_code" | "provisioning">("input_email");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [demoHintCode, setDemoHintCode] = useState<string | null>(null);
 
   const resetForm = () => {
     setEmail("");
     setOtpCode("");
     setStep("input_email");
     setErrorMessage(null);
-    setDemoHintCode(null);
     closeAuthModal();
   };
 
@@ -53,13 +54,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await sendOtpCode(email.trim());
-      if (res.demoCode) {
-        setDemoHintCode(res.demoCode);
-      }
+      await sendOtpCode(email.trim());
       setStep("enter_code");
     } catch (err: any) {
-      setErrorMessage(err.message || "Failed to send code. Please try again.");
+      setErrorMessage(err.message || "Failed to send verification code.");
     } finally {
       setLoading(false);
     }
@@ -92,17 +90,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
     setStep("provisioning");
 
     try {
-      await loginWithGoogle({
-        email: email.trim() || "alex.stellar@example.com",
-        name: "Alex Rivera",
-      });
+      await loginWithGoogle();
     } catch (err: any) {
       setStep("input_email");
-      setErrorMessage(err.message || "Google sign-in failed. Please try again.");
+      setErrorMessage(err.message || "Google sign-in is unavailable.");
     } finally {
       setLoading(false);
     }
   };
+
+  const handleEnterSandbox = async () => {
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      await enterSandbox("alice");
+      if (onContinueDemo) onContinueDemo();
+    } catch (err: any) {
+      setErrorMessage(err.message || "Unable to start development sandbox.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const emailEnabled = isPrivyConfigured || capabilities.emailOtpConfigured;
+  const googleEnabled = isPrivyConfigured || capabilities.googleConfigured;
 
   return (
     <AnimatePresence>
@@ -144,7 +155,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
                   Sign in to TrustFlow
                 </h2>
                 <p className="text-xs text-[var(--tf-muted)]">
-                  Access your payments and balance
+                  Access your agreements and payment workspace
                 </p>
               </div>
             </div>
@@ -156,10 +167,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
                 </div>
                 <div className="space-y-1">
                   <h3 className="text-sm font-semibold text-slate-950 dark:text-white">
-                    Preparing your account
+                    Verifying your session
                   </h3>
                   <p className="text-xs text-[var(--tf-muted)] max-w-xs mx-auto">
-                    Setting up your payment account and test balance.
+                    Confirming credentials with the server.
                   </p>
                 </div>
               </div>
@@ -199,8 +210,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
 
                 {/* Error Banner */}
                 {errorMessage && (
-                  <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 flex items-center gap-2 text-xs text-red-700 dark:text-red-300">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
+                  <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 flex items-start gap-2 text-xs text-red-700 dark:text-red-300">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span>{errorMessage}</span>
                   </div>
                 )}
@@ -208,6 +219,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
                 {/* Email OTP */}
                 {activeTab === "email" && (
                   <div>
+                    {!emailEnabled && (
+                      <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+                        Email delivery is not configured on this server yet.
+                        {capabilities.devSandboxEnabled
+                          ? " Use the development test sandbox below to explore multi-party flows."
+                          : ""}
+                      </div>
+                    )}
+
                     {step === "input_email" ? (
                       <form onSubmit={handleSendCode} className="space-y-4">
                         <div>
@@ -226,7 +246,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
                             />
                           </div>
                           <p className="text-[11px] text-[var(--tf-muted)] mt-1.5">
-                            We will send a 6-digit code to sign you in or create your account.
+                            We will send a 6-digit verification code to sign in.
                           </p>
                         </div>
 
@@ -253,21 +273,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
                             Change
                           </button>
                         </div>
-
-                        {demoHintCode && (
-                          <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-xs flex items-center justify-between text-amber-900 dark:text-amber-200">
-                            <span>
-                              Verification code: <strong className="font-mono">{demoHintCode}</strong>
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setOtpCode(demoHintCode)}
-                              className="text-xs font-semibold underline cursor-pointer"
-                            >
-                              Fill code
-                            </button>
-                          </div>
-                        )}
 
                         <div>
                           <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
@@ -301,27 +306,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
                 {activeTab === "google" && (
                   <div className="space-y-4">
                     <p className="text-xs text-[var(--tf-muted)] leading-relaxed">
-                      Sign in with Google to get started with a ready payment account.
+                      {googleEnabled
+                        ? "Sign in securely using your verified Google account."
+                        : "Google OAuth is not configured on this server (missing GOOGLE_CLIENT_ID / Privy configuration)."}
                     </p>
-
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                        Display name (optional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Alex Rivera"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="w-full px-3.5 py-2.5 text-sm bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] rounded-xl focus:outline-none focus:border-[#4A2574] dark:focus:border-[#F5D03A] text-slate-950 dark:text-white placeholder:text-[var(--tf-muted)]"
-                      />
-                    </div>
 
                     <button
                       type="button"
                       onClick={handleGoogleLogin}
-                      disabled={loading}
-                      className="w-full min-h-[44px] px-4 text-xs font-semibold text-slate-900 dark:text-white bg-[var(--tf-surface-subtle)] hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-xl border border-[var(--tf-border)] transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                      disabled={loading || !googleEnabled}
+                      className="w-full min-h-[44px] px-4 text-xs font-semibold text-slate-900 dark:text-white bg-[var(--tf-surface-subtle)] hover:bg-slate-200/70 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl border border-[var(--tf-border)] transition-colors flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <Globe className="w-4 h-4 text-[#4A2574] dark:text-[#F5D03A]" />
                       <span>Continue with Google</span>
@@ -332,13 +326,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
             )}
 
             <div className="mt-5 pt-4 border-t border-[var(--tf-border)] flex flex-col items-center gap-2 text-center">
-              {onContinueDemo && step !== "provisioning" && (
+              {capabilities.devSandboxEnabled && step !== "provisioning" && (
                 <button
                   type="button"
-                  onClick={onContinueDemo}
-                  className="text-xs font-medium text-[var(--tf-muted)] hover:text-slate-950 dark:hover:text-white transition-colors cursor-pointer"
+                  onClick={handleEnterSandbox}
+                  disabled={loading}
+                  className="text-xs font-medium text-[#4A2574] dark:text-[#F5D03A] hover:underline transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  Continue in test mode
+                  Continue in development test sandbox
                 </button>
               )}
               <span className="text-[11px] text-[var(--tf-muted)] opacity-80">

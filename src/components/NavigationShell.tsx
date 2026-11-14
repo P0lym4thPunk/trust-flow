@@ -27,7 +27,7 @@ interface NavigationShellProps {
   onTabChange: (tab: string) => void;
   onReturnHome: () => void;
   currentAccount: WalletAccount;
-  onAccountChange: (account: WalletAccount) => void;
+  onAccountChange: (account: WalletAccount) => Promise<void> | void;
   isSimulated: boolean;
   onConnectRealWallet: () => void;
   walletNotice?: string | null;
@@ -55,16 +55,18 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [refreshingBalance, setRefreshingBalance] = useState(false);
+  const [switchingPersona, setSwitchingPersona] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const menuContainerRef = useRef<HTMLDivElement>(null);
 
   const {
     user,
+    capabilities,
     isAuthenticated,
     openAuthModal,
     logout,
     refreshBalance,
     isDemoSandbox,
-    setIsDemoSandbox,
     selectedDemoPersona,
   } = useAuth();
 
@@ -75,7 +77,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     { id: "completed", label: "Completed", icon: CheckCircle2 },
   ];
 
-  // Close menu & modal on Escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -87,7 +88,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Close desktop dropdown when clicking outside
   useEffect(() => {
     if (!menuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -103,6 +103,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   }, [menuOpen]);
 
   const handleCopyAddress = (addr: string) => {
+    if (!addr) return;
     navigator.clipboard.writeText(addr);
     setCopiedAddress(true);
     setTimeout(() => setCopiedAddress(false), 2000);
@@ -124,15 +125,27 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
 
   const handleOpenAccount = () => {
     setMenuOpen(false);
+    setSwitchError(null);
     setAccountModalOpen(true);
+  };
+
+  const handleSwitchPersona = async (persona: WalletAccount) => {
+    setSwitchingPersona(true);
+    setSwitchError(null);
+    try {
+      await onAccountChange(persona);
+    } catch (err: any) {
+      setSwitchError(err.message || "Failed to switch testing role.");
+    } finally {
+      setSwitchingPersona(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-[var(--tf-canvas)] text-[var(--tf-ink)] flex flex-col transition-colors duration-200">
-      {/* Slim Authenticated Header: Logo only on left, Theme + Menu toggles on right */}
+      {/* Slim Header */}
       <header className="sticky top-0 z-40 h-14 border-b border-[var(--tf-border)] bg-[var(--tf-canvas)]/85 backdrop-blur-md">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-full flex items-center justify-between gap-4">
-          {/* Top left: TrustFlow logo ONLY, clickable to return to landing page */}
           <button
             type="button"
             onClick={onReturnHome}
@@ -145,7 +158,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
             </div>
           </button>
 
-          {/* Top right: Compact theme toggle + compact navigation menu toggle */}
           <div className="relative flex items-center gap-1" ref={menuContainerRef}>
             <button
               type="button"
@@ -231,22 +243,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   </button>
 
                   {isDemoSandbox && (
-                    <div className="mt-1.5 px-3 py-2 rounded-xl bg-slate-100/80 dark:bg-slate-800/60 text-[11px] text-[var(--tf-muted)] flex items-center justify-between">
+                    <div className="mt-1.5 px-3 py-2 rounded-xl bg-amber-500/10 text-[11px] text-amber-800 dark:text-amber-300 flex items-center justify-between">
                       <span className="truncate">
-                        Persona: {selectedDemoPersona.displayName.split(" ")[0]}
+                        Dev Sandbox: {selectedDemoPersona.displayName.split(" ")[0]}
                       </span>
-                      {isAuthenticated && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsDemoSandbox(false);
-                            setMenuOpen(false);
-                          }}
-                          className="font-semibold text-[#4A2574] dark:text-[#F5D03A] hover:underline shrink-0 ml-2 cursor-pointer"
-                        >
-                          My account
-                        </button>
-                      )}
                     </div>
                   )}
                 </motion.div>
@@ -334,22 +334,10 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               </nav>
 
               {isDemoSandbox && (
-                <div className="pt-3 border-t border-[var(--tf-border)] text-xs text-[var(--tf-muted)] flex items-center justify-between">
+                <div className="pt-3 border-t border-[var(--tf-border)] text-xs text-amber-800 dark:text-amber-300 flex items-center justify-between">
                   <span className="truncate">
-                    Testing as {selectedDemoPersona.displayName.split(" ")[0]}
+                    Dev Sandbox: {selectedDemoPersona.displayName.split(" ")[0]}
                   </span>
-                  {isAuthenticated && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsDemoSandbox(false);
-                        setMenuOpen(false);
-                      }}
-                      className="font-semibold text-[#4A2574] dark:text-[#F5D03A] cursor-pointer"
-                    >
-                      My account
-                    </button>
-                  )}
                 </div>
               )}
             </motion.aside>
@@ -382,7 +370,6 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
               className="relative w-full max-w-md max-h-[90dvh] overflow-y-auto bg-[var(--tf-surface)]/95 backdrop-blur-md rounded-2xl border border-[var(--tf-border)] shadow-2xl p-6 space-y-5 z-10"
             >
-              {/* Close button */}
               <button
                 type="button"
                 onClick={() => setAccountModalOpen(false)}
@@ -392,27 +379,26 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 <X className="w-4 h-4" />
               </button>
 
-              {/* User Header */}
               <div className="pr-8">
                 <div className="text-xs font-medium text-[#4A2574] dark:text-[#F5D03A] mb-1">
-                  Account and balance details
+                  {isDemoSandbox ? "Development Sandbox Session" : "Account and balance details"}
                 </div>
                 <h2 className="text-xl font-display font-bold text-slate-950 dark:text-white">
                   {currentAccount.displayName}
                 </h2>
                 <p className="text-xs text-[var(--tf-muted)] mt-0.5">
                   {user?.email ? `${user.email} · ` : ""}
-                  {currentAccount.role.toLowerCase()} · Test network
+                  {user?.walletCustody === "none" ? "No wallet linked" : "Stellar Testnet"}
                 </p>
               </div>
 
-              {walletNotice && (
+              {(walletNotice || switchError) && (
                 <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start justify-between gap-2">
                   <span className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>{walletNotice}</span>
+                    <span>{switchError || walletNotice}</span>
                   </span>
-                  {onClearWalletNotice && (
+                  {onClearWalletNotice && !switchError && (
                     <button
                       type="button"
                       onClick={onClearWalletNotice}
@@ -428,30 +414,36 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
               {/* Stellar Account Address + Copy */}
               <div className="p-3.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-[var(--tf-muted)]">
-                  <span>Account address</span>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyAddress(currentAccount.address)}
-                    className="inline-flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white cursor-pointer"
-                  >
-                    {copiedAddress ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-500" />
-                        <span className="text-emerald-600 dark:text-emerald-400">
-                          Copied
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy address</span>
-                      </>
-                    )}
-                  </button>
+                  <span>Linked wallet address</span>
+                  {currentAccount.address && (
+                    <button
+                      type="button"
+                      onClick={() => handleCopyAddress(currentAccount.address)}
+                      className="inline-flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white cursor-pointer"
+                    >
+                      {copiedAddress ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-500" />
+                          <span className="text-emerald-600 dark:text-emerald-400">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy address</span>
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
-                <div className="font-mono text-xs text-slate-900 dark:text-slate-100 break-all leading-relaxed">
-                  {currentAccount.address}
-                </div>
+                {currentAccount.address ? (
+                  <div className="font-mono text-xs text-slate-900 dark:text-slate-100 break-all leading-relaxed">
+                    {currentAccount.address}
+                  </div>
+                ) : (
+                  <div className="text-xs text-[var(--tf-muted)]">
+                    No Stellar wallet linked yet. Connect Freighter below to bind a wallet address.
+                  </div>
+                )}
               </div>
 
               {/* Balances */}
@@ -460,7 +452,7 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   <span className="text-xs font-medium text-[var(--tf-muted)]">
                     Available balances
                   </span>
-                  {isAuthenticated && !isDemoSandbox && (
+                  {isAuthenticated && currentAccount.address && (
                     <button
                       type="button"
                       onClick={handleRefreshBalances}
@@ -486,56 +478,48 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   <div className="p-3.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)]">
                     <span className="text-xs text-[var(--tf-muted)]">XLM</span>
                     <div className="text-xl font-display font-bold text-slate-950 dark:text-white tabular-nums mt-0.5">
-                      {currentAccount.balanceXLM || "10,000.00"}
+                      {currentAccount.balanceXLM || "0.00"}
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Testing Persona Switcher */}
-              <div className="space-y-2 pt-3 border-t border-[var(--tf-border)]">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-[var(--tf-muted)]">
-                    Switch testing role
-                  </span>
-                  {isDemoSandbox && isAuthenticated && (
-                    <button
-                      type="button"
-                      onClick={() => setIsDemoSandbox(false)}
-                      className="text-xs font-semibold text-[#4A2574] dark:text-[#F5D03A] hover:underline cursor-pointer"
-                    >
-                      Use my account
-                    </button>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  {SIMULATED_PROFILES.map((p) => {
-                    const selected = currentAccount.address === p.address;
-                    return (
-                      <button
-                        key={p.address}
-                        type="button"
-                        onClick={() => {
-                          onAccountChange(p);
-                        }}
-                        className={`w-full px-3 py-2.5 rounded-xl border text-left flex items-center justify-between text-xs transition-colors cursor-pointer ${
-                          selected
-                            ? "border-[#F5D03A] bg-[#F5D03A]/10 text-slate-950 dark:text-white font-semibold"
-                            : "border-[var(--tf-border)] text-slate-600 dark:text-slate-300 hover:bg-[var(--tf-surface-subtle)]"
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate">{p.displayName}</div>
-                          <div className="text-[11px] text-[var(--tf-muted)] font-normal mt-0.5">
-                            {p.role.toLowerCase()} · {formatAddress(p.address)}
+              {/* Development Sandbox Persona Switcher (explicitly gated) */}
+              {capabilities.devSandboxEnabled && isDemoSandbox && (
+                <div className="space-y-2 pt-3 border-t border-[var(--tf-border)]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-[var(--tf-muted)]">
+                      Switch sandbox testing role
+                    </span>
+                  </div>
+                  <div className="space-y-1.5">
+                    {SIMULATED_PROFILES.map((p) => {
+                      const selected = currentAccount.address === p.address;
+                      return (
+                        <button
+                          key={p.address}
+                          type="button"
+                          disabled={switchingPersona}
+                          onClick={() => handleSwitchPersona(p)}
+                          className={`w-full px-3 py-2.5 rounded-xl border text-left flex items-center justify-between text-xs transition-colors cursor-pointer disabled:opacity-50 ${
+                            selected
+                              ? "border-[#F5D03A] bg-[#F5D03A]/10 text-slate-950 dark:text-white font-semibold"
+                              : "border-[var(--tf-border)] text-slate-600 dark:text-slate-300 hover:bg-[var(--tf-surface-subtle)]"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate">{p.displayName}</div>
+                            <div className="text-[11px] text-[var(--tf-muted)] font-normal mt-0.5">
+                              {p.role.toLowerCase()} · {formatAddress(p.address)}
+                            </div>
                           </div>
-                        </div>
-                        {selected && <Check className="w-4 h-4 text-[#F5D03A] shrink-0" />}
-                      </button>
-                    );
-                  })}
+                          {selected && <Check className="w-4 h-4 text-[#F5D03A] shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Account Actions */}
               <div className="pt-3 border-t border-[var(--tf-border)] flex flex-wrap items-center justify-between gap-3">
@@ -565,14 +549,16 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={onConnectRealWallet}
-                    className="text-xs font-medium text-[var(--tf-muted)] hover:text-slate-900 dark:hover:text-white inline-flex items-center gap-1 cursor-pointer"
-                  >
-                    <Wallet className="w-3.5 h-3.5" />
-                    <span>Connect Freighter</span>
-                  </button>
+                  {!isDemoSandbox && (
+                    <button
+                      type="button"
+                      onClick={onConnectRealWallet}
+                      className="text-xs font-medium text-[var(--tf-muted)] hover:text-slate-900 dark:hover:text-white inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <Wallet className="w-3.5 h-3.5" />
+                      <span>Connect Freighter</span>
+                    </button>
+                  )}
                 </div>
 
                 <button

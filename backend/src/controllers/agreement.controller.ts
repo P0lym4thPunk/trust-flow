@@ -1,79 +1,152 @@
-import { Request, Response } from "express";
-import { agreementService } from "../services/agreement.service.js";
-import { computeCanonicalHash } from "../services/hash.service.js";
+import { NextFunction, Response } from "express";
+import { AuthenticatedRequest } from "../middleware/auth.middleware.js";
+import { AgreementService } from "../services/agreement.service.js";
+import { AppError } from "../types/backend.types.js";
 
-export function handleGetAllAgreements(_req: Request, res: Response) {
-  const list = agreementService.getAll();
-  res.json(list);
-}
-
-export function handleGetAgreementById(req: Request, res: Response) {
-  const agreement = agreementService.getById(req.params.id);
-  if (!agreement) {
-    return res.status(404).json({ error: "Agreement not found" });
-  }
-  res.json(agreement);
-}
-
-export async function handleCreateOrUpdateAgreement(req: Request, res: Response) {
-  const payload = req.body;
-  if (!payload || !payload.id || !payload.title) {
-    return res.status(400).json({ error: "Invalid agreement payload" });
-  }
-
-  // Compute and ensure deterministic canonical hash
-  if (payload.terms) {
-    const computedHash = await computeCanonicalHash(payload.terms);
-    payload.canonicalHash = computedHash;
-  }
-
-  const saved = agreementService.save(payload);
-  res.json(saved);
-}
-
-export async function handleAcceptAgreement(req: Request, res: Response) {
-  const { id } = req.params;
-  const { role, actor, canonicalHash } = req.body; // "PAYER" or "RECIPIENT"
-  const agreement = agreementService.getById(id);
-
-  if (!agreement) {
-    return res.status(404).json({ error: "Agreement not found" });
-  }
-
-  if (role !== "PAYER" && role !== "RECIPIENT") {
-    return res.status(400).json({ error: "Invalid role: must be PAYER or RECIPIENT" });
-  }
-
-  // Verify canonical hash matches stored agreement terms
-  if (canonicalHash) {
-    const serverCanonicalHash = agreement.canonicalHash || (await computeCanonicalHash(agreement.terms));
-    if (canonicalHash !== serverCanonicalHash) {
-      return res.status(400).json({
-        error: "Canonical hash mismatch: terms have been modified or tampered with.",
-        expected: serverCanonicalHash,
-        received: canonicalHash,
-      });
+export function createAgreementController(agreementService: AgreementService) {
+  function requireUser(req: AuthenticatedRequest) {
+    if (!req.authUser) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required.");
     }
+    return req.authUser;
   }
 
-  if (role === "PAYER") {
-    agreement.payerAccepted = true;
-  } else if (role === "RECIPIENT") {
-    agreement.recipientAccepted = true;
-  }
+  return {
+    async listAll(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const list = await agreementService.listForUser(user);
+        res.json(list);
+      } catch (err) {
+        next(err);
+      }
+    },
 
-  // Advance lifecycle when both parties accept
-  if (agreement.payerAccepted && agreement.recipientAccepted) {
-    agreement.status = "READY_FOR_FUNDING";
-  }
+    async getById(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const agreement = await agreementService.getForUser(user, req.params.id);
+        res.json(agreement);
+      } catch (err) {
+        next(err);
+      }
+    },
 
-  const updated = agreementService.addActivity(id, {
-    actor: actor || (role === "PAYER" ? agreement.terms.payer : agreement.terms.recipient),
-    actorRole: role,
-    type: "ACCEPTED",
-    title: `Agreement accepted by ${role.toLowerCase()}`,
-    description: `Terms version ${agreement.version} accepted with verified canonical hash ${agreement.canonicalHash?.slice(0, 8)}...`,
-  });
+    async create(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const created = await agreementService.createAgreement(user, req.body);
+        res.status(201).json(created);
+      } catch (err) {
+        next(err);
+      }
+    },
 
-  res.json(updated);
+    async accept(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const { role, canonicalHash, expectedVersion } = req.body || {};
+        const updated = await agreementService.acceptAgreement(user, req.params.id, {
+          role,
+          canonicalHash,
+          expectedVersion,
+        });
+        res.json(updated);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async requestChanges(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const { reason, updatedTerms, expectedVersion } = req.body || {};
+        const updated = await agreementService.requestChanges(user, req.params.id, {
+          reason,
+          updatedTerms,
+          expectedVersion,
+        });
+        res.json(updated);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async submitFulfilment(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const { notes, evidenceUrl, expectedVersion } = req.body || {};
+        const updated = await agreementService.submitFulfilment(user, req.params.id, {
+          notes,
+          evidenceUrl,
+          expectedVersion,
+        });
+        res.json(updated);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async approve(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const { expectedVersion } = req.body || {};
+        const updated = await agreementService.approveFulfilment(user, req.params.id, {
+          expectedVersion,
+        });
+        res.json(updated);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async requestCancellation(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const { expectedVersion } = req.body || {};
+        const updated = await agreementService.requestCancellation(user, req.params.id, {
+          expectedVersion,
+        });
+        res.json(updated);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async withdrawCancellation(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const { expectedVersion } = req.body || {};
+        const updated = await agreementService.withdrawCancellation(user, req.params.id, {
+          expectedVersion,
+        });
+        res.json(updated);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async confirmCancellation(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const user = requireUser(req);
+        const { expectedVersion } = req.body || {};
+        const updated = await agreementService.confirmCancellation(user, req.params.id, {
+          expectedVersion,
+        });
+        res.json(updated);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    blockPhase2Financial(_req: AuthenticatedRequest, _res: Response, next: NextFunction) {
+      next(
+        new AppError(
+          501,
+          "PHASE_2_REQUIRED",
+          "On-chain funding, release, and refund execution require Phase 2 Trustless Work integration and cannot be performed client-side."
+        )
+      );
+    },
+  };
 }

@@ -1,22 +1,33 @@
-import { Request, Response } from "express";
-import { draftAgreement, checkAgreement } from "../services/ai.service.js";
+import { NextFunction, Response } from "express";
+import { AuthenticatedRequest } from "../middleware/auth.middleware.js";
+import { AiService } from "../services/ai.service.js";
 
-export async function handleDraft(req: Request, res: Response) {
-  const { prompt, transactionType = "WORK", userRole = "PAYER" } = req.body;
-  if (!prompt) {
-    return res.status(400).json({ error: "Prompt is required" });
-  }
+export function createAiController(aiService: AiService) {
+  return {
+    getInfo(_req: AuthenticatedRequest, res: Response) {
+      res.json(aiService.getModelInfo());
+    },
 
-  const result = await draftAgreement(prompt, transactionType, userRole);
-  res.json(result);
-}
+    async handleDraft(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const { prompt, transactionType = "WORK", userRole = "PAYER" } = req.body || {};
+        const actorKey = req.authUser?.id || req.ip || "anonymous";
+        const result = await aiService.draftAgreement(prompt, transactionType, userRole, actorKey);
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    },
 
-export async function handleCheck(req: Request, res: Response) {
-  const { terms } = req.body;
-  if (!terms) {
-    return res.status(400).json({ error: "Agreement terms are required" });
-  }
-
-  const result = await checkAgreement(terms);
-  res.json(result);
+    async handleCheck(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        const { terms } = req.body || {};
+        const actorKey = req.authUser?.id || req.ip || "anonymous";
+        const result = await aiService.checkAgreement(terms, actorKey);
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    },
+  };
 }

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { MotionConfig } from "motion/react";
+import { usePrivy } from "@privy-io/react-auth";
 import { LandingPage } from "./components/LandingPage";
 import { NavigationShell } from "./components/NavigationShell";
 import { ConversationalWorkspace } from "./components/ConversationalWorkspace";
@@ -30,12 +31,14 @@ function TrustFlowMain() {
   const [walletNotice, setWalletNotice] = useState<string | null>(null);
 
   const {
+    user,
     isAuthenticated,
     openAuthModal,
     closeAuthModal,
+    getAuthHeaders,
     effectiveAccount,
-    setIsDemoSandbox,
-    setSelectedDemoPersona,
+    switchSandboxPersona,
+    linkExternalWallet,
   } = useAuth();
 
   const prevAuthRef = useRef(isAuthenticated);
@@ -49,81 +52,84 @@ function TrustFlowMain() {
     }
   }, [isDark]);
 
-  // Automatically enter workspace when a user signs in from the landing page
+  // Enter workspace on sign in; return to landing page on sign out
   useEffect(() => {
     if (!prevAuthRef.current && isAuthenticated && !inApp) {
       setInApp(true);
       setActiveTab("workspace");
       setSelectedAgreement(null);
+    } else if (prevAuthRef.current && !isAuthenticated) {
+      setInApp(false);
+      setAgreements([]);
+      setSelectedAgreement(null);
     }
     prevAuthRef.current = isAuthenticated;
   }, [isAuthenticated, inApp]);
 
-  // Fetch agreements from Express server backend
-  const fetchAgreements = async () => {
-    try {
-      const res = await fetch("/api/agreements");
-      if (res.ok) {
-        const data = await res.json();
-        setAgreements(data);
-      }
-    } catch (err) {
-      console.error("Error fetching agreements:", err);
+  // Fetch agreements strictly for authenticated caller
+  const fetchAgreements = useCallback(async () => {
+    if (!isAuthenticated) {
+      setAgreements([]);
+      return;
     }
-  };
+    try {
+      const res = await fetch("/api/agreements", {
+        headers: { ...getAuthHeaders() },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to load agreements (${res.status})`);
+      }
+      const data: AgreementRecord[] = await res.json();
+      setAgreements(data);
+      setSelectedAgreement((prev) =>
+        prev ? data.find((a) => a.id === prev.id) || null : null
+      );
+    } catch (err: any) {
+      console.error("Error fetching agreements:", err);
+      setWalletNotice(err.message || "Unable to load agreements.");
+    }
+  }, [isAuthenticated, getAuthHeaders]);
 
   useEffect(() => {
     fetchAgreements();
-  }, []);
+  }, [fetchAgreements, user?.id, user?.stellarAddress]);
 
-  // Connect authentic Freighter wallet (fallback)
   const handleConnectRealWallet = async () => {
     setWalletNotice(null);
     try {
       const realAccount = await connectFreighterWallet();
-      if (realAccount) {
-        setSelectedDemoPersona(realAccount);
-        setIsDemoSandbox(false);
+      if (realAccount && realAccount.address) {
+        await linkExternalWallet(realAccount.address);
       }
     } catch (err: any) {
       setWalletNotice(err.message || "Failed to connect Freighter wallet.");
     }
   };
 
-  // Switch persona (e.g. Alice Payer, Bob Contractor, Charlie Approver)
-  const handleAccountChange = (account: WalletAccount) => {
-    setSelectedDemoPersona(account);
-    setIsDemoSandbox(true);
+  const handleAccountChange = async (account: WalletAccount) => {
+    await switchSandboxPersona(account);
   };
 
-  // Update agreement record in state and server
-  const handleUpdateAgreement = async (updated: AgreementRecord) => {
-    try {
-      await fetch("/api/agreements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updated),
-      });
-      setSelectedAgreement(updated);
-      setAgreements((prev) =>
-        prev.map((a) => (a.id === updated.id ? updated : a))
-      );
-    } catch (err) {
-      console.error("Failed to persist agreement update:", err);
-    }
+  // Update local list strictly from authoritative backend-returned AgreementRecord
+  const handleAgreementSynced = (updated: AgreementRecord) => {
+    setSelectedAgreement(updated);
+    setAgreements((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
   };
 
-  // Launch app directly (used when authenticated or entering demo/app entry point)
   const handleLaunchApp = (type?: TransactionType) => {
     if (type) {
       setWorkspaceInitialType(type);
+    }
+    if (!isAuthenticated) {
+      openAuthModal();
+      return;
     }
     setInApp(true);
     setActiveTab("workspace");
     setSelectedAgreement(null);
   };
 
-  // Primary landing action: take user to existing authentication flow, or workspace if already signed in
   const handleGetStarted = () => {
     if (isAuthenticated) {
       handleLaunchApp("WORK");
@@ -132,16 +138,16 @@ function TrustFlowMain() {
     }
   };
 
-  // Continue in demo mode from AuthModal
   const handleEnterDemo = () => {
     closeAuthModal();
-    setIsDemoSandbox(true);
-    handleLaunchApp("WORK");
+    setInApp(true);
+    setActiveTab("workspace");
+    setSelectedAgreement(null);
   };
 
   return (
     <>
-      {!inApp ? (
+      {!inApp || !effectiveAccount ? (
         <LandingPage
           isDark={isDark}
           onToggleTheme={() => setIsDark(!isDark)}
@@ -172,7 +178,7 @@ function TrustFlowMain() {
             <AgreementDetailRoom
               agreement={selectedAgreement}
               currentAccount={effectiveAccount}
-              onUpdateAgreement={handleUpdateAgreement}
+              onUpdateAgreement={handleAgreementSynced}
               onBack={() => setSelectedAgreement(null)}
             />
           ) : activeTab === "workspace" ? (
@@ -213,22 +219,29 @@ function TrustFlowMain() {
   );
 }
 
+function PrivyAuthWrapper({ children }: { children: React.ReactNode }) {
+  const { getAccessToken } = usePrivy();
+  return <AuthProvider getPrivyAccessToken={getAccessToken}>{children}</AuthProvider>;
+}
+
 export default function App() {
-  const content = (
+  if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter) {
+    return (
+      <MotionConfig reducedMotion="user">
+        <PrivyAdapterProvider adapter={pollarPrivyAdapter}>
+          <PrivyAuthWrapper>
+            <TrustFlowMain />
+          </PrivyAuthWrapper>
+        </PrivyAdapterProvider>
+      </MotionConfig>
+    );
+  }
+
+  return (
     <MotionConfig reducedMotion="user">
       <AuthProvider>
         <TrustFlowMain />
       </AuthProvider>
     </MotionConfig>
   );
-
-  if (IS_PRIVY_CONFIGURED && pollarPrivyAdapter) {
-    return (
-      <PrivyAdapterProvider adapter={pollarPrivyAdapter}>
-        {content}
-      </PrivyAdapterProvider>
-    );
-  }
-
-  return content;
 }

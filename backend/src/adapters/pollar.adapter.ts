@@ -1,51 +1,50 @@
-/**
- * Pollar / Privy Wallet & Authentication Adapter
- * 
- * Provides an isolated interface for embedded wallet provisioning,
- * session verification, and signing proxy through Pollar / Privy.
- */
+import { JwtVerifierService } from "../services/jwtVerifier.service.js";
 
+/**
+ * Pollar / Privy Authentication & Embedded Wallet Adapter (Server Verification Boundary)
+ *
+ * Never trusts unverified tokens or falls back to fake authenticated demo users.
+ */
 export interface PollarSessionVerification {
   valid: boolean;
   userId?: string;
   stellarAddress?: string;
-  email?: string;
   error?: string;
 }
 
 export class PollarAdapter {
-  private appId: string | null = process.env.PRIVY_APP_ID || process.env.POLLAR_APP_ID || null;
-  private appSecret: string | null = process.env.PRIVY_APP_SECRET || process.env.POLLAR_API_KEY || null;
+  private readonly appId: string | null =
+    process.env.PRIVY_APP_ID || process.env.VITE_PRIVY_APP_ID || process.env.POLLAR_APP_ID || null;
+  private readonly verificationKeyPem: string | null = process.env.PRIVY_VERIFICATION_KEY || null;
+  private readonly verifier = new JwtVerifierService();
 
-  /**
-   * Validates an authorization bearer token or session cookie from frontend
-   */
   async verifySession(token: string): Promise<PollarSessionVerification> {
     if (!token) {
       return { valid: false, error: "Missing authorization token" };
     }
-
-    // When configured with Privy/Pollar credentials, verify JWT via server SDK
-    if (!this.appId || !this.appSecret) {
-      // In development / demo mode when credentials are not yet configured:
-      return {
-        valid: true,
-        userId: "usr-demo-001",
-        stellarAddress: token.startsWith("G") ? token : "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
-        email: "demo@trustflow.stellar",
-      };
+    if (!this.appId) {
+      return { valid: false, error: "Privy/Pollar credentials are not configured on this server" };
     }
 
-    // Placeholder for official verified Pollar / Privy server verification call
-    return {
-      valid: true,
-      userId: "usr-verified",
-      stellarAddress: "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
-    };
+    try {
+      const verified = await this.verifier.verifyPrivyAccessToken(token, {
+        appId: this.appId,
+        verificationKeyPem: this.verificationKeyPem,
+      });
+      return {
+        valid: true,
+        userId: verified.sub,
+      };
+    } catch (err: any) {
+      return {
+        valid: false,
+        error: err?.message || "Privy token verification failed",
+      };
+    }
   }
 
   isConfigured(): boolean {
-    return Boolean(this.appId && this.appSecret);
+    return Boolean(this.appId);
   }
 }
 

@@ -17,7 +17,7 @@ export interface WalletAccount {
 // 3 Standard Simulated Personas for End-to-End Testing
 export const SIMULATED_PROFILES: WalletAccount[] = [
   {
-    address: "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7",
+    address: "GC2YDKW52O7MJ62JGPZGQSKWDN6YUHXU3M32QJQ6DFRBATWL6RIHUOP6",
     displayName: "Alice (Client / Payer)",
     role: "PAYER",
     avatar: "👩‍💼",
@@ -26,7 +26,7 @@ export const SIMULATED_PROFILES: WalletAccount[] = [
     isSimulated: true,
   },
   {
-    address: "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K",
+    address: "GAA3NUA7AXVA54TYMPHTHB6UKZ7ZGFJHUIPOFPPU5TDL5KI2BLCBAJNX",
     displayName: "Bob (Designer / Recipient)",
     role: "RECIPIENT",
     avatar: "👨‍🎨",
@@ -35,7 +35,7 @@ export const SIMULATED_PROFILES: WalletAccount[] = [
     isSimulated: true,
   },
   {
-    address: "GCK5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K7",
+    address: "GCEVSPK3KR7BHVHLBXD2IIVZBP5G4P73WBKWSA6ZWBGHB2FE7JDMZKTL",
     displayName: "Charlie (Approver / Reviewer)",
     role: "APPROVER",
     avatar: "🧑‍⚖️",

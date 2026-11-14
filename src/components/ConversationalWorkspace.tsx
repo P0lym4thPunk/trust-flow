@@ -18,6 +18,7 @@ import { AgreementRecord, AgreementTerms, CheckerAuditResult, TransactionType } 
 import { STELLAR_TESTNET_CONFIG, toStroopUnits, validateStellarAddress } from "../lib/stellar/config";
 import { computeAgreementHash } from "../lib/hash";
 import { getAgreementVisualStatus, getToneClasses } from "../lib/agreementStatus";
+import { useAuth } from "../lib/auth/AuthContext";
 
 interface ConversationalWorkspaceProps {
   initialType?: TransactionType;
@@ -40,6 +41,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
 }) => {
   const shouldReduceMotion = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { getAuthHeaders } = useAuth();
 
   // Mode: "overview" (Conversational starting point) or "guided_creator" (6-step flow)
   const [viewMode, setViewMode] = useState<"overview" | "guided_creator">("overview");
@@ -49,7 +51,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
   const [selectedType, setSelectedType] = useState<TransactionType>(initialType);
 
   // Form Fields
-  const [counterpartyInput, setCounterpartyInput] = useState("GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
+  const [counterpartyInput, setCounterpartyInput] = useState("GAA3NUA7AXVA54TYMPHTHB6UKZ7ZGFJHUIPOFPPU5TDL5KI2BLCBAJNX");
   const [counterpartyName, setCounterpartyName] = useState("Bob (Freelance Designer)");
   const [paymentTitle, setPaymentTitle] = useState("Website Redesign & Brand Assets");
   const [paymentDescription, setPaymentDescription] = useState("Design responsive Figma components and export production tokens");
@@ -89,12 +91,12 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
 
   const quickContacts = isRequestFlow
     ? [
-        { name: "Alice (Client / Funder)", address: "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7" },
-        { name: "Charlie (Reviewer)", address: "GCK5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K7" },
+        { name: "Alice (Client / Funder)", address: "GC2YDKW52O7MJ62JGPZGQSKWDN6YUHXU3M32QJQ6DFRBATWL6RIHUOP6" },
+        { name: "Charlie (Reviewer)", address: "GCEVSPK3KR7BHVHLBXD2IIVZBP5G4P73WBKWSA6ZWBGHB2FE7JDMZKTL" },
       ]
     : [
-        { name: "Bob (Freelance Designer)", address: "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K" },
-        { name: "Charlie (Technical Reviewer)", address: "GCK5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K7" },
+        { name: "Bob (Freelance Designer)", address: "GAA3NUA7AXVA54TYMPHTHB6UKZ7ZGFJHUIPOFPPU5TDL5KI2BLCBAJNX" },
+        { name: "Charlie (Technical Reviewer)", address: "GCEVSPK3KR7BHVHLBXD2IIVZBP5G4P73WBKWSA6ZWBGHB2FE7JDMZKTL" },
       ];
 
   // Start guided payment creator with specific template
@@ -108,7 +110,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
 
     if (type === "WORK") {
       setCounterpartyName("Bob (Freelance Designer)");
-      setCounterpartyInput("GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
+      setCounterpartyInput("GAA3NUA7AXVA54TYMPHTHB6UKZ7ZGFJHUIPOFPPU5TDL5KI2BLCBAJNX");
       setPaymentTitle("Website Redesign & Brand Assets");
       setPaymentDescription("Design responsive Figma components and export production tokens");
       setAmountInput("500.00");
@@ -117,7 +119,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       setConditionInput("Client reviews and explicitly approves submitted design files and code");
     } else if (type === "PROTECTED_PAYMENT") {
       setCounterpartyName("Bob (Seller / Recipient)");
-      setCounterpartyInput("GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
+      setCounterpartyInput("GAA3NUA7AXVA54TYMPHTHB6UKZ7ZGFJHUIPOFPPU5TDL5KI2BLCBAJNX");
       setPaymentTitle("Vintage Camera Purchase");
       setPaymentDescription("Olympus OM-1 35mm Film Camera with 50mm f/1.8 Lens");
       setAmountInput("250.00");
@@ -126,7 +128,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       setConditionInput("Buyer confirms package arrival and satisfactory mechanical condition");
     } else {
       setCounterpartyName("Alice (Client / Funder)");
-      setCounterpartyInput("GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7");
+      setCounterpartyInput("GC2YDKW52O7MJ62JGPZGQSKWDN6YUHXU3M32QJQ6DFRBATWL6RIHUOP6");
       setPaymentTitle("Frontend Delivery & Integration");
       setPaymentDescription("Deliver agreed work stages and receive payment on client approval");
       setAmountInput("650.00");
@@ -148,7 +150,10 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
     try {
       const response = await fetch("/api/ai/draft", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({
           prompt: promptToSend,
           transactionType: selectedType,
@@ -156,11 +161,10 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
         }),
       });
 
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(`Unable to create draft (${response.status}).`);
+        throw new Error(data.error || `Unable to create draft (${response.status}).`);
       }
-
-      const data = await response.json();
 
       if (data.result === "CLARIFICATION_REQUIRED") {
         setClarification(
@@ -224,20 +228,29 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       .map((d) => d.trim())
       .filter(Boolean);
 
-    const rawAmount = overrides?.amount ?? amountInput;
+    const rawAmount = (overrides?.amount ?? amountInput).trim();
+    const numericAmount = parseFloat(rawAmount);
+    const normalizedAmount =
+      Number.isFinite(numericAmount) && numericAmount > 0
+        ? /^\d+(\.\d{1,7})$/.test(rawAmount)
+          ? rawAmount.includes(".") && rawAmount.split(".")[1].length < 2
+            ? numericAmount.toFixed(2)
+            : rawAmount
+          : numericAmount.toFixed(2)
+        : "0.00";
     const rawDays = overrides?.deadlineDays ?? deadlineDays;
     const otherParty =
       counterpartyInput.trim() ||
       (isRequestFlow
-        ? "GDQ634WS652Y247B256XCV753N64K7C5N7T7K7K7K7K7K7K7K7K7K7K7"
-        : "GAAR5B2K36EPLI6T37J6Z4AK7C5N7T7K7K7K7K7K7K7K7K7K7K7K7K7K");
+        ? "GC2YDKW52O7MJ62JGPZGQSKWDN6YUHXU3M32QJQ6DFRBATWL6RIHUOP6"
+        : "GAA3NUA7AXVA54TYMPHTHB6UKZ7ZGFJHUIPOFPPU5TDL5KI2BLCBAJNX");
 
     const payer = isRequestFlow ? otherParty : currentUserAddress;
     const recipient = isRequestFlow ? currentUserAddress : otherParty;
     const approver = isRequestFlow ? otherParty : currentUserAddress;
 
     return {
-      amount: parseFloat(rawAmount || "100").toFixed(2),
+      amount: normalizedAmount,
       asset: overrides?.asset ?? assetChoice,
       payer,
       recipient,
@@ -261,13 +274,16 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
     };
   };
 
-  // Run Clarity Check Audit (preserved untouched)
+  // Run Clarity Check Audit
   const runCheckerAudit = async (terms: AgreementTerms) => {
     setChecking(true);
     try {
       const response = await fetch("/api/ai/check", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({ terms }),
       });
       if (response.ok) {
@@ -285,9 +301,17 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
   const validateStep = (step: number): boolean => {
     setStepValidationError(null);
     if (step === 1) {
+      if (!currentUserAddress || !validateStellarAddress(currentUserAddress)) {
+        setStepValidationError("Please link a Stellar wallet in Account details (or use Dev Sandbox) before creating an agreement.");
+        return false;
+      }
       const addr = counterpartyInput.trim();
       if (!addr || !validateStellarAddress(addr)) {
         setStepValidationError("Please select a contact or enter a valid Stellar account address starting with G.");
+        return false;
+      }
+      if (addr === currentUserAddress) {
+        setStepValidationError("Payer and recipient cannot be the same account address.");
         return false;
       }
     }
@@ -298,9 +322,19 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       }
     }
     if (step === 3) {
-      const parsed = parseFloat(amountInput);
+      const trimmed = amountInput.trim();
+      const parsed = parseFloat(trimmed);
       if (Number.isNaN(parsed) || parsed <= 0) {
         setStepValidationError("Please enter a valid payment amount greater than zero.");
+        return false;
+      }
+      try {
+        const normalized = /^\d+(\.\d{1,7})$/.test(trimmed)
+          ? trimmed
+          : parsed.toFixed(2);
+        toStroopUnits(normalized);
+      } catch (err: any) {
+        setStepValidationError(err.message || "Enter a positive amount with up to 7 decimals.");
         return false;
       }
     }
@@ -310,12 +344,20 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
         return false;
       }
     }
+    if (step === 5 && checkerAudit?.overallStatus === "BLOCKING_ISSUES") {
+      setStepValidationError("Resolve blocking clarity findings before finalizing this agreement.");
+      return false;
+    }
     return true;
   };
 
-  // Finalize Agreement and Save to Server (preserved untouched)
+  // Finalize Agreement and Save to Server
   const handleFinalizeAgreement = async () => {
     setErrorMessage(null);
+    if (checkerAudit?.overallStatus === "BLOCKING_ISSUES") {
+      setErrorMessage("Resolve blocking review findings before creating this agreement.");
+      return;
+    }
     setSubmittingAgreement(true);
     try {
       const terms = buildTermsObject();
@@ -324,45 +366,31 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
       const canonicalHash = await computeAgreementHash(terms);
       const agreementId = `agr-${Date.now()}`;
 
-      const newRecord: AgreementRecord = {
+      const payload = {
         id: agreementId,
         transactionType: selectedType,
         title: terms.title,
         description: terms.description,
         terms,
         canonicalHash,
-        version: terms.version,
         status: "CREATED",
-        cancelRequest: "NONE",
-        payerAccepted: !isRequestFlow,
-        recipientAccepted: isRequestFlow,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        activity: [
-          {
-            id: `act-${Date.now()}`,
-            agreementId,
-            timestamp: new Date().toISOString(),
-            actor: currentUserAddress,
-            actorRole: isRequestFlow ? "RECIPIENT" : "PAYER",
-            type: "CREATED",
-            title: isRequestFlow ? "Payment request created" : "Payment agreement created",
-            description: `Drafted for ${terms.amount} ${terms.asset}. Awaiting counterparty review.`,
-          },
-        ],
       };
 
       const res = await fetch("/api/agreements", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newRecord),
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify(payload),
       });
 
-      if (res.ok) {
-        onAgreementCreated(newRecord);
-      } else {
-        throw new Error("Could not save agreement. Please try again.");
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || "Could not save agreement. Please verify your inputs and try again.");
       }
+
+      onAgreementCreated(body);
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to create payment agreement.");
     } finally {
@@ -937,18 +965,51 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
                   </div>
                 ) : (
                   checkerAudit && (
-                    <div className="p-3.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] text-xs space-y-1">
+                    <div
+                      className={`p-3.5 rounded-xl border text-xs space-y-2.5 ${
+                        checkerAudit.overallStatus === "BLOCKING_ISSUES"
+                          ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/50"
+                          : "bg-[var(--tf-surface-subtle)] border-[var(--tf-border)]"
+                      }`}
+                    >
                       <div className="flex items-center gap-1.5 font-semibold text-slate-900 dark:text-white">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        {checkerAudit.overallStatus === "BLOCKING_ISSUES" ? (
+                          <AlertCircle className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+                        ) : (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        )}
                         <span>
                           {checkerAudit.overallStatus === "PASS"
                             ? "Clarity review passed"
+                            : checkerAudit.overallStatus === "BLOCKING_ISSUES"
+                            ? "Blocking issues found"
                             : "Review notes"}
                         </span>
                       </div>
                       <p className="text-[var(--tf-muted)] leading-relaxed">
                         {checkerAudit.summary}
                       </p>
+                      {Array.isArray(checkerAudit.findings) && checkerAudit.findings.length > 0 && (
+                        <ul className="space-y-1.5 pt-1 border-t border-[var(--tf-border)]">
+                          {checkerAudit.findings.map((finding, idx) => (
+                            <li key={idx} className="text-[11px] leading-relaxed text-slate-700 dark:text-slate-300">
+                              <span
+                                className={`font-semibold uppercase mr-1.5 ${
+                                  finding.severity === "BLOCKING"
+                                    ? "text-red-600 dark:text-red-400"
+                                    : finding.severity === "WARNING"
+                                    ? "text-amber-600 dark:text-amber-400"
+                                    : "text-[var(--tf-muted)]"
+                                }`}
+                              >
+                                [{finding.severity}]
+                              </span>
+                              <span className="font-medium text-slate-900 dark:text-white">{finding.issue}:</span>{" "}
+                              {finding.suggestedRevision}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   )
                 )}
