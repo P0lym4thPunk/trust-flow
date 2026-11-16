@@ -1,0 +1,1297 @@
+# TRUSTFLOW — STEP 2.2: BACKEND-AUTHORITATIVE STELLAR WALLET PROVISIONING
+
+## 1. ROLE AND MISSION
+
+You are acting as a senior full-stack engineer, backend architect, security engineer, and independent QA engineer working on TrustFlow.
+
+Your task is to remediate the Stellar embedded-wallet provisioning architecture so that duplicate wallet creation is prevented through **backend-authoritative identity verification, wallet discovery, provisioning authorization, and recovery**.
+
+This is a continuation of the existing TrustFlow implementation.
+
+Do not rebuild the application.
+Do not redesign approved screens.
+Do not replace working authentication flows unnecessarily.
+Do not assume an API capability exists because a similar capability exists for another blockchain.
+Do not introduce undocumented Privy SDK methods, undocumented REST parameters, or speculative workarounds.
+
+The implementation must be based on:
+1. The actual TrustFlow source code.
+2. The installed dependency versions and their TypeScript definitions.
+3. Current official Privy documentation.
+4. Verified API request and response schemas.
+5. Automated tests and real integration evidence where available.
+
+**Primary objective:** A Privy user must not receive multiple embedded Stellar wallets because of a reload, repeated request, browser change, cleared browser storage, simultaneous authentication attempts, delayed Privy propagation, or ambiguous provisioning failure.
+
+**Secondary objective:** A genuine first-time user must not become permanently locked out because a previous provisioning attempt failed.
+
+The backend must become the authority that determines whether a wallet exists and whether a new creation attempt is permitted. The frontend must not independently make that decision.
+
+---
+
+## 2. EXISTING PROJECT CONTEXT — PRESERVE THIS
+
+TrustFlow is an AI-assisted conditional payments application using Privy authentication and Stellar/Soroban infrastructure.
+
+The current authentication architecture has already gone through two implementation stages.
+
+### Step 1 — Accepted implementation
+
+Backend Privy identity verification has been implemented and accepted, with live API verification still pending.
+
+The implementation reportedly includes:
+
+- Cryptographic Privy JWT verification.
+- Issuer and audience validation.
+- Verification of the Privy user through the official Privy API.
+- Matching the verified Privy subject to the authoritative Privy user ID.
+- Extraction and validation of eligible embedded Stellar wallet information.
+- Rejection of client-supplied wallet identity spoofing.
+- Protection against email-based cross-provider account merging.
+- Backend-only Privy App Secret handling.
+- Appropriate error handling for missing, invalid, or multiple eligible wallets.
+
+Existing important files include:
+
+- `backend/src/services/privyClient.service.ts`
+- `backend/src/services/auth.service.ts`
+- `backend/src/controllers/auth.controller.ts` or the existing equivalent.
+- `backend/src/config/runtime.config.ts` or the existing equivalent.
+- `backend/src/index.ts`
+- `backend/src/services/jwtVerifier.service.ts`
+
+These are reference paths from the existing implementation. Inspect the actual repository before modifying anything.
+
+Do not replace the accepted Step 1 authentication verification.
+
+### Step 2 — Existing frontend authentication implementation
+
+The existing frontend authentication lifecycle was implemented using:
+
+- `src/lib/auth/privyLifecycle.ts`
+- `src/lib/auth/AuthContext.tsx`
+- `src/App.tsx`
+- `src/components/AuthModal.tsx`
+- `tests/frontend-privy-auth.test.ts`
+
+The installed dependencies were previously reported as:
+
+- `@privy-io/react-auth@3.51.4`
+- `@privy-io/js-sdk-core@0.79.5`
+- `@pollar/privy-adapter@0.11.1`
+
+Verify the actual installed versions before relying on these details.
+
+The frontend has a lifecycle controller, wallet extraction, authentication synchronization, Google OAuth redirect recovery, and recoverable synchronization states.
+
+Its current provisioning approach has an important defect:
+
+- The controller has in-memory provisioning guards.
+- A new controller is created after a reload.
+- Those guards disappear.
+- `refreshUser()` can temporarily return a user snapshot without the newly created Stellar wallet.
+- The frontend may interpret that temporary absence as proof that no wallet exists.
+- It can then invoke `createWallet()` again.
+- Multiple wallets can cause the backend to reject the user with `MULTIPLE_EMBEDDED_STELLAR_WALLETS`.
+
+The previous Step 2.1 proposal introduced a persistent client-side provisioning marker.
+
+That is not sufficient as the final safeguard.
+
+A browser marker does not protect the same Privy user across:
+- Different browsers.
+- Different devices.
+- Incognito sessions.
+- Cleared browser storage.
+- Concurrent sessions.
+- Browser profiles that do not share storage.
+
+A client-side marker may remain as an additional UX or recovery mechanism, but it must not be the authority that permits wallet creation.
+
+### Existing backend synchronization
+
+The existing frontend calls:
+
+`POST /api/auth/privy-sync`
+
+The previous implementation sends the Privy access token and Stellar address.
+
+Inspect the actual implementation and preserve its accepted security properties.
+
+Do not trust a wallet address supplied by the frontend as proof of wallet ownership or proof that provisioning is complete.
+
+The backend must establish the wallet's identity and ownership independently.
+
+---
+
+## 3. CRITICAL FIRST TASK: PRIVY API AND SDK COMPATIBILITY RESEARCH
+
+**Do not modify wallet creation code until this investigation is complete.**
+
+The most important technical question is:
+
+Can TrustFlow safely use Privy's server-side wallet APIs to discover and, if appropriate, create an embedded Stellar wallet owned by the authenticated Privy user, while preserving compatibility with the existing frontend Privy SDK and the signing capabilities TrustFlow will need later?
+
+Do not assume the answer.
+
+### 3.1 Inspect official Privy documentation
+
+Start with the official documentation:
+
+- https://docs.privy.io/
+- https://docs.privy.io/llms.txt
+- https://docs.privy.io/wallets/wallets/external-ids
+- https://docs.privy.io/authentication/user-authentication/access-tokens
+
+Use the documentation index to locate the current official references for:
+
+- Server-side user lookup.
+- Wallet listing and wallet retrieval.
+- Wallet creation.
+- Embedded wallet ownership.
+- Stellar wallet support.
+- Wallet filtering by Privy user ID.
+- Wallet filtering by chain type.
+- External wallet IDs.
+- Idempotency keys.
+- API authentication.
+- Wallet authorization requirements.
+- Pagination and consistency behaviour.
+- Wallet response schemas.
+- Any limitations specific to the Stellar extended chain.
+
+Do not rely on old blog posts, unofficial tutorials, generated examples, or documentation for Ethereum and Solana as proof of Stellar support.
+
+### 3.2 Inspect the installed SDK and actual project code
+
+Inspect:
+
+- `package.json`
+- Lockfile.
+- Installed Privy packages.
+- Relevant TypeScript declaration files.
+- Existing Privy REST client.
+- Existing JWT verification service.
+- Existing wallet extraction logic.
+- Existing frontend `useCreateWallet()` implementation.
+- Existing `refreshUser()` implementation.
+- Existing tests.
+
+The previously identified frontend SDK behaviour was:
+
+- `useCreateWallet()` accepts `{ chainType: "stellar" }`.
+- It invokes the Privy wallet creation flow.
+- `useUser().refreshUser()` refreshes the authenticated user.
+- `useWallets()` may not expose Stellar wallet accounts through the same interface as Ethereum or Solana.
+
+Verify these observations against the installed version. Do not assume they remain true.
+
+### 3.3 Prove the server-side wallet ownership model
+
+Before implementing server-side creation, establish all of the following:
+
+1. The official Privy server API supports the required Stellar wallet creation operation.
+2. The API can associate the created wallet with the already authenticated Privy user.
+3. The resulting wallet is genuinely an embedded wallet of that user.
+4. The frontend SDK can retrieve the resulting wallet through the normal authenticated user's linked accounts.
+5. The wallet is compatible with the existing TrustFlow wallet extraction and validation logic.
+6. The wallet's custody and signing behaviour are compatible with the intended future Trustless Work/Soroban integration, or any limitations are explicitly documented.
+7. The required authorization mechanism is supported and correctly configured.
+8. The server can reliably discover the wallet after creation.
+9. The server can distinguish an authoritative absence from a temporary or ambiguous result.
+
+Do not silently change wallet ownership, custody, signer configuration, or authentication semantics.
+
+### 3.4 Investigate stable wallet identity
+
+Investigate Privy's documented `external_id` support.
+
+If it is supported for the exact Stellar creation operation, evaluate assigning one deterministic, stable external ID per TrustFlow Privy user.
+
+Requirements:
+
+- The identifier must be derived from the verified Privy user ID.
+- It must be deterministic.
+- It must be unique within the Privy app.
+- It must obey Privy's documented character and length restrictions.
+- It must not expose sensitive user information.
+- It must never be generated randomly on every retry.
+- It must not be assigned to an unrelated wallet.
+- It must not be changed after creation if Privy treats it as immutable.
+
+A possible conceptual format is:
+
+`trustflow-stellar-<stable-hash-of-privy-user-id>`
+
+This is an example of an identifier strategy, not an instruction to use an unverified implementation.
+
+Verify whether the Stellar wallet creation API actually supports this field.
+
+If it does not, do not invent support. Report the limitation and evaluate another documented, durable mapping strategy.
+
+### 3.5 Investigate idempotency
+
+Inspect Privy's official idempotency documentation and determine:
+
+- Which exact wallet creation endpoint supports an idempotency key.
+- The exact header name and format.
+- The documented idempotency retention period.
+- Whether Stellar creation supports it.
+- Whether the same key and same request return the original result.
+- What happens if the first request is still processing.
+- What happens if the original request succeeds remotely but the response is lost.
+- What happens when the key expires.
+- Whether the mechanism protects against concurrent requests.
+
+Use a stable idempotency key for one logical provisioning operation if officially supported.
+
+Do not treat a time-limited idempotency key as permanent duplicate protection.
+
+The backend must also enforce its own durable concurrency and uniqueness rules.
+
+### 3.6 Research gate — mandatory stop condition
+
+Before proceeding, produce a compatibility report covering:
+
+| Capability | Evidence required |
+|---|---|
+| Server-side Stellar wallet creation | Official documentation and verified schema |
+| Ownership by existing Privy user | Verified request and response |
+| Server-side Stellar wallet discovery | Verified endpoint and filtering |
+| External ID support | Verified for Stellar creation |
+| Idempotency support | Verified for Stellar creation |
+| Frontend retrieval compatibility | Verified against installed SDK |
+| Signing compatibility | Verified or explicitly unresolved |
+| Recovery after ambiguous creation | Documented and technically supported |
+
+If server-side creation cannot be proven compatible with the existing frontend embedded wallet flow, **STOP**.
+
+Do not implement a substitute wallet type.
+
+Do not silently retain the unsafe client-side creation flow.
+
+Do not claim Step 2.2 is complete.
+
+Instead, return a detailed blocker report describing:
+- What is supported.
+- What is not supported.
+- What evidence is missing.
+- What safe alternatives exist.
+- Whether a Privy support clarification or configuration change is required.
+
+If the creation API is compatible, continue to implementation.
+
+---
+
+## 4. REQUIRED BACKEND-AUTHORITATIVE ARCHITECTURE
+
+The backend must own the wallet provisioning decision.
+
+The frontend must no longer independently decide that a missing wallet means it should call `createWallet()`.
+
+### 4.1 Required high-level flow
+
+Implement the following conceptual flow, adapting route and service names to the existing architecture.
+
+1. User authenticates through Privy.
+2. Frontend obtains the current Privy access token.
+3. Frontend calls TrustFlow's backend wallet synchronization/provisioning endpoint.
+4. Backend verifies the Privy JWT using the existing Step 1 verification service.
+5. Backend obtains the verified Privy user ID.
+6. Backend queries Privy server-side for the user's eligible Stellar embedded wallet.
+7. Backend checks its own durable provisioning record for that Privy subject.
+8. Backend determines whether a wallet already exists, provisioning is in progress, the result is ambiguous, or creation is genuinely permitted.
+9. If an existing wallet is found, backend verifies it and returns its authoritative wallet details.
+10. If creation is permitted, backend performs exactly one controlled provisioning operation through the verified compatible mechanism.
+11. Backend records the result durably.
+12. Frontend retrieves or refreshes the authenticated Privy user.
+13. Frontend confirms that its eligible embedded Stellar wallet matches the backend's verified wallet.
+14. TrustFlow marks the wallet ready only after the required checks succeed.
+
+The frontend must not mark wallet provisioning complete merely because the backend accepted a request.
+
+### 4.2 Backend authority
+
+The backend must use:
+
+- Verified Privy JWT identity.
+- Official Privy server-side API.
+- Backend-only Privy App Secret.
+- Durable provisioning state.
+- Durable concurrency protection.
+- Verified wallet ownership.
+- Verified Stellar wallet address and wallet ID.
+
+Never trust:
+- Client-supplied Privy user IDs.
+- Client-supplied wallet addresses as authoritative.
+- Client-supplied provisioning status.
+- Browser storage markers as authoritative.
+- A stale React user snapshot.
+- A successful HTTP request alone as proof of wallet creation.
+
+The Privy App Secret must remain server-side and must never appear in frontend bundles, browser requests, console output, test fixtures containing real secrets, or public error responses.
+
+### 4.3 Durable provisioning ledger
+
+Inspect the existing backend storage and database architecture.
+
+Use the existing durable database if it supports the required constraints.
+
+Do not use:
+- Process memory as the only lock.
+- A JavaScript Map as the only provisioning ledger.
+- `localStorage` as the authority.
+- A temporary browser marker as the authority.
+- An in-memory lock that disappears when the server restarts.
+
+The backend needs a durable record keyed by the verified Privy user ID.
+
+At minimum, evaluate these fields:
+
+- `privy_user_id`
+- `provisioning_status`
+- `privy_wallet_id`, nullable
+- `stellar_address`, nullable
+- `external_id`, nullable if supported
+- `idempotency_key`, nullable if supported
+- `attempt_count`
+- `last_attempt_at`
+- `last_reconciled_at`
+- `last_error_code`, nullable
+- `created_at`
+- `updated_at`
+
+Adapt the schema to the existing database conventions.
+
+Requirements:
+
+1. Enforce one TrustFlow Stellar provisioning record per Privy user.
+2. Use a database uniqueness constraint on the verified Privy user ID.
+3. Use transactions or equivalent atomic operations for state transitions.
+4. Prevent two simultaneous requests from starting independent creation operations for the same user.
+5. Ensure locks and state transitions remain safe across multiple backend instances if the deployment architecture uses more than one instance.
+6. Never delete an unresolved provisioning record simply because a request timed out.
+7. Preserve auditability of previous attempts.
+8. Do not store private keys, seed phrases, access tokens, or Privy App Secrets in this ledger.
+
+If the existing backend has no suitable persistent database, stop before implementing provisioning authority. Report the storage limitation and the smallest necessary architectural change. Do not substitute in-memory storage and claim production safety.
+
+### 4.4 Backend state machine
+
+Implement explicit, validated states.
+
+Use the following conceptual states, adapting names to existing conventions:
+
+- `not_started`
+- `checking`
+- `creation_authorized`
+- `creation_in_progress`
+- `reconciliation_required`
+- `wallet_confirmed`
+- `failed_recoverable`
+- `manual_review_required`
+
+The state machine must prevent unsafe transitions.
+
+Examples:
+
+- `not_started` → `checking`
+- `checking` → `wallet_confirmed` when an existing valid wallet is found.
+- `checking` → `creation_authorized` only when authoritative checks establish that creation is permitted.
+- `creation_authorized` → `creation_in_progress` through an atomic backend operation.
+- `creation_in_progress` → `wallet_confirmed` when the wallet is verified.
+- `creation_in_progress` → `reconciliation_required` when the result is ambiguous.
+- `reconciliation_required` → `wallet_confirmed` when the wallet is subsequently found.
+- `reconciliation_required` → `creation_authorized` only when an authoritative reconciliation process explicitly establishes that a new attempt is safe.
+- `reconciliation_required` → `manual_review_required` when safe automatic recovery cannot be established.
+- `failed_recoverable` must not automatically mean that creation is permitted.
+
+Do not implement arbitrary state transitions.
+
+### 4.5 Required backend decision outcomes
+
+The backend should return explicit machine-readable outcomes.
+
+Use these conceptual outcomes:
+
+**A. `wallet_exists`**
+
+An eligible embedded Stellar wallet has been found and verified.
+
+Return:
+- Verified Privy user ID.
+- Privy wallet ID.
+- Stellar address.
+- Wallet status.
+
+Do not create another wallet.
+
+**B. `creation_in_progress_or_unknown`**
+
+A provisioning operation has started, but its outcome cannot yet be established.
+
+Return:
+- A recoverable pending status.
+- A safe retry/reconciliation instruction.
+- No permission for the frontend to create a wallet.
+
+Do not create another wallet.
+
+**C. `creation_permitted`**
+
+The backend has completed the required authoritative checks and has atomically authorized one new logical creation attempt.
+
+This is the only state that permits the approved creation operation.
+
+The authorization must be enforced server-side, not accepted as a client assertion.
+
+**D. `reconciliation_unavailable`**
+
+Privy cannot currently provide a trustworthy answer, the API is unavailable, or the result is ambiguous.
+
+Return a recoverable error.
+
+Do not create another wallet.
+
+**E. `manual_review_required`**
+
+The backend cannot safely determine whether another creation attempt is permitted.
+
+Do not create another wallet.
+
+The user must receive a clear recovery message, not an endless spinner or an unexplained authentication failure.
+
+Do not expose internal Privy API details or secrets to the client.
+
+---
+
+## 5. WALLET DISCOVERY AND CREATION SAFETY
+
+This is the core of the remediation.
+
+### 5.1 Existing wallet discovery
+
+For every authenticated provisioning request:
+
+1. Verify the Privy access token.
+2. Obtain the authoritative Privy subject.
+3. Query Privy using the documented server-side wallet discovery mechanism.
+4. Filter for the correct Privy user and Stellar chain.
+5. Identify eligible embedded Stellar wallets using verified metadata.
+6. Validate the Stellar address using the existing StrKey validation logic.
+7. Compare the result against the durable TrustFlow provisioning record.
+8. Reconcile any disagreement before taking further action.
+
+Handle these outcomes explicitly:
+
+- Exactly one eligible wallet.
+- Zero eligible wallets.
+- Multiple eligible wallets.
+- Wallet metadata incomplete.
+- Wallet ownership mismatch.
+- Privy API unavailable.
+- Pagination or incomplete results.
+- Temporary inconsistency between user linked accounts and wallet listing.
+- Existing TrustFlow record points to a wallet that is no longer returned.
+- Privy returns a wallet with an unexpected chain or ownership type.
+
+Never interpret a failed lookup as proof that no wallet exists.
+
+Never interpret a single temporarily empty response as definitive absence unless Privy's documented consistency guarantees establish that this is safe.
+
+### 5.2 Confirmed absence versus ambiguous absence
+
+This distinction is mandatory.
+
+**Confirmed absence** means the backend has sufficient authoritative evidence, under the documented behaviour of the relevant Privy API, to conclude that no eligible Stellar wallet exists for the verified Privy subject.
+
+**Ambiguous absence** means:
+- The request timed out.
+- The Privy API returned an error.
+- The result is incomplete.
+- The result may be stale.
+- Pagination was not fully processed.
+- The wallet may have been created but is not yet visible.
+- A previous create request may still be processing.
+- A previous create request returned an ambiguous outcome.
+
+Ambiguous absence must never authorize wallet creation.
+
+Do not invent a consistency guarantee.
+
+If Privy's API does not document strong enough guarantees to establish confirmed absence immediately after a creation attempt, the system must remain in reconciliation or manual-review state until safe evidence is available.
+
+### 5.3 Safe first-time provisioning
+
+A clean first-time user may be eligible for provisioning only when:
+
+1. The Privy identity is verified.
+2. The backend has no existing confirmed wallet.
+3. The backend has no unresolved prior provisioning operation.
+4. The backend has no previous ambiguous attempt that remains unresolved.
+5. The authoritative Privy lookup has completed successfully.
+6. The result is sufficiently trustworthy to establish absence.
+7. The durable ledger permits one new logical operation.
+8. The operation is protected by a database uniqueness constraint and backend concurrency control.
+9. The approved creation mechanism is verified compatible with the frontend wallet flow.
+
+The frontend's `refreshUser()` response is not sufficient authorization.
+
+A missing wallet in the frontend linked-account snapshot is not sufficient authorization.
+
+### 5.4 Creation operation
+
+If server-side Privy creation is proven compatible:
+
+- Use the official documented endpoint or supported official SDK.
+- Use the verified Privy user as wallet owner.
+- Use the verified Stellar chain type.
+- Use the stable external ID if supported.
+- Use the documented idempotency mechanism if supported.
+- Persist the provisioning operation before the remote request.
+- Use a backend-controlled request identifier.
+- Prevent duplicate concurrent operations.
+- Record the provider response and resulting wallet ID.
+- Verify the created wallet through the authoritative discovery mechanism.
+- Do not mark success until wallet ownership and address have been validated.
+
+Do not assume a successful create response is sufficient proof that the wallet is retrievable through the existing frontend SDK.
+
+### 5.5 Handling a timeout or lost response
+
+A timeout does not prove creation failed.
+
+If the create request times out, the connection drops, the backend restarts, or the response is lost:
+
+1. Keep the durable operation record.
+2. Mark the operation as requiring reconciliation.
+3. Do not issue a new creation request immediately.
+4. Query Privy for the intended wallet using the strongest supported lookup mechanism.
+5. If found, verify it and mark the operation successful.
+6. If not found but the result remains potentially stale or ambiguous, keep reconciling.
+7. If Privy provides authoritative evidence that the previous operation did not create a wallet and is no longer processing, a new attempt may be authorized through an atomic backend decision.
+8. If no such evidence can be obtained, move to `manual_review_required`.
+
+Never automatically expire an unresolved operation and create another wallet simply because time has passed.
+
+### 5.6 Recovery from genuine creation failure
+
+We must not create a permanent lockout.
+
+The backend must provide a sanctioned recovery path.
+
+A new creation attempt may only be authorized after the backend establishes all of the following:
+
+- The previous operation is no longer active.
+- The previous operation did not create a wallet.
+- No eligible wallet exists for the Privy subject.
+- The lookup result is authoritative enough for this decision.
+- The backend atomically transitions the durable record into a new authorized attempt.
+- The new attempt uses the correct idempotency strategy and attempt tracking.
+
+If these conditions cannot be established, do not create again.
+
+Provide a clear recoverable or manual-review state.
+
+**Never solve the permanent-lockout problem by automatically clearing markers, expiring records, or blindly retrying `createWallet()`.**
+
+---
+
+## 6. FRONTEND CHANGES
+
+The frontend must become a consumer of backend provisioning decisions.
+
+It must not be the authority that decides whether a wallet should be created.
+
+Inspect and carefully update:
+
+- `src/lib/auth/privyLifecycle.ts`
+- `src/lib/auth/AuthContext.tsx`
+- `src/App.tsx`
+- `src/components/AuthModal.tsx`
+- `tests/frontend-privy-auth.test.ts`
+
+Preserve existing authentication UX and approved UI.
+
+### 6.1 Remove unsafe client-side creation authority
+
+The frontend must no longer call `createWallet()` simply because:
+
+- `refreshUser()` returned no Stellar wallet.
+- The current React user snapshot has no Stellar linked account.
+- The user reloaded the page.
+- A previous synchronization failed.
+- A browser marker is missing.
+- A retry button was pressed.
+
+If server-side creation is proven compatible, route provisioning through the backend-controlled operation.
+
+If server-side creation is not compatible, stop and report the blocker rather than keeping the unsafe client-side creation path.
+
+### 6.2 Frontend responsibilities
+
+The frontend should:
+
+1. Authenticate using the existing Privy flow.
+2. Obtain a valid Privy access token.
+3. Call the backend provisioning/synchronization endpoint.
+4. Interpret the backend's explicit outcome.
+5. Refresh the Privy user when appropriate.
+6. Retrieve the eligible embedded Stellar wallet through the supported frontend SDK.
+7. Compare its wallet identity and address against the backend-confirmed wallet.
+8. Mark `wallet_ready` only when the required verification succeeds.
+9. Show a recoverable state when reconciliation is pending or unavailable.
+10. Allow retries of backend reconciliation without independently creating a wallet.
+
+### 6.3 Required frontend states
+
+Preserve existing states where possible:
+
+- `initializing`
+- `unauthenticated`
+- `privy_authenticated`
+- `wallet_loading`
+- `wallet_ready`
+- `backend_syncing`
+- `authenticated`
+- `sync_failed`
+
+Add or adapt a clear pending-reconciliation state if needed.
+
+The UI must distinguish:
+
+- Checking for an existing wallet.
+- Provisioning in progress.
+- Waiting for Privy wallet visibility.
+- Wallet successfully verified.
+- Temporary reconciliation failure.
+- Manual recovery required.
+
+Do not show a successful wallet connection before the backend and frontend wallet identities match.
+
+### 6.4 Retry behaviour
+
+A retry button must retry reconciliation or backend synchronization.
+
+It must not independently invoke wallet creation.
+
+Repeated clicks must not generate multiple provisioning operations.
+
+Use request deduplication and controller lifecycle protection, but remember that frontend guards are supplementary only. Backend durable uniqueness and concurrency control are mandatory.
+
+### 6.5 Account switching and logout
+
+Preserve isolation between Privy users.
+
+- Never reuse one user's wallet state for another user.
+- Never associate a wallet with an email address instead of the verified Privy subject.
+- Cancel or ignore stale frontend requests after account switching.
+- Do not clear unresolved backend provisioning records on logout.
+- Do not delete durable provisioning history because a user signs out.
+- On re-login, reconcile against the backend's authoritative state.
+
+A local browser marker may be retained for UX, but it must never override the backend.
+
+### 6.6 Existing authentication methods
+
+Preserve:
+- Email OTP.
+- Google OAuth.
+- Existing OAuth redirect recovery.
+- Existing authenticated session handling.
+- Existing backend synchronization.
+- Existing development sandbox behaviour.
+
+Do not merge independent authentication providers based on matching email addresses.
+
+Do not allow Freighter or another external wallet to silently replace the embedded wallet.
+
+Custody separation remains a later dedicated phase.
+
+---
+
+## 7. ERROR HANDLING, LOGGING AND SECURITY
+
+### 7.1 Structured logging
+
+Add structured logs for provisioning events.
+
+Include:
+- Verified Privy user ID.
+- TrustFlow provisioning record ID.
+- Operation/request ID.
+- Provisioning state.
+- Attempt number.
+- Provider response category.
+- Wallet ID when available.
+- Relevant error code.
+- Timestamp.
+- Reconciliation outcome.
+
+The Privy user ID must be available in internal logs for wallet conflict investigation.
+
+For `MULTIPLE_EMBEDDED_STELLAR_WALLETS`, include the verified Privy user ID in the structured backend log.
+
+Do not expose unnecessary internal identifiers or provider details in public responses.
+
+Never log:
+- Privy App Secret.
+- Privy access tokens.
+- Authorization headers.
+- Private keys.
+- Seed phrases.
+- Wallet signing material.
+- Full sensitive request payloads.
+
+### 7.2 Error codes
+
+Preserve existing error codes where appropriate.
+
+Add explicit codes for conditions such as:
+
+- `PRIVY_WALLET_LOOKUP_FAILED`
+- `STELLAR_WALLET_NOT_FOUND`
+- `STELLAR_WALLET_PROVISIONING_IN_PROGRESS`
+- `STELLAR_WALLET_RECONCILIATION_REQUIRED`
+- `STELLAR_WALLET_CREATION_NOT_AUTHORIZED`
+- `STELLAR_WALLET_CREATION_FAILED`
+- `MULTIPLE_EMBEDDED_STELLAR_WALLETS`
+- `STELLAR_WALLET_OWNERSHIP_MISMATCH`
+- `STELLAR_WALLET_FRONTEND_MISMATCH`
+- `STELLAR_WALLET_MANUAL_REVIEW_REQUIRED`
+
+Use the existing API response conventions.
+
+### 7.3 Fail-closed configuration
+
+If the Privy App Secret is missing or invalid:
+
+- Do not attempt server-side wallet creation.
+- Do not fall back to client-side creation.
+- Do not accept client-supplied wallet data as authoritative.
+- Return a clear backend configuration error.
+- Preserve the existing accepted Step 1 fail-closed behaviour.
+
+---
+
+## 8. TESTING REQUIREMENTS
+
+Preserve the original eight Step 2.1 test scenarios.
+
+Expand them to cover backend authority, durable storage, concurrency, and recovery.
+
+Use the existing test framework and conventions.
+
+### 8.1 Original eight scenarios — all required
+
+**Test 1: Reload during provisioning**
+
+- Start provisioning.
+- Persist the operation state.
+- Simulate a browser reload.
+- Create a new frontend controller.
+- Re-authenticate as the same Privy user.
+- Confirm that the new controller asks the backend for reconciliation.
+- Confirm that no independent frontend wallet creation occurs.
+- Confirm that the existing operation is recovered.
+
+**Test 2: Privy refresh failure**
+
+- Simulate `refreshUser()` failure.
+- Confirm that the frontend does not interpret failure as wallet absence.
+- Confirm that no new wallet is created.
+- Confirm that reconciliation can be retried.
+
+**Test 3: Delayed wallet visibility**
+
+- Simulate a successful remote creation response.
+- Delay the appearance of the wallet in linked accounts.
+- Return an initially empty user snapshot.
+- Confirm that the backend operation remains unresolved.
+- Confirm that no second creation request is made.
+- Eventually expose the wallet.
+- Confirm that the wallet is reconciled and verified.
+
+**Test 4: Account switching**
+
+- Start provisioning for Privy user A.
+- Switch to Privy user B before completion.
+- Confirm that user A's response cannot populate user B's state.
+- Confirm that each user's backend record remains isolated.
+- Confirm that neither user can inherit the other's wallet.
+
+**Test 5: Logout during provisioning**
+
+- Start provisioning.
+- Log out before completion.
+- Confirm that the backend operation remains durable.
+- Log back in as the same user.
+- Confirm that the system reconciles the existing operation.
+- Confirm that no duplicate creation occurs.
+
+**Test 6: Genuine first-time provisioning**
+
+- Use a clean test Privy user.
+- Confirm the backend has no existing wallet or unresolved operation.
+- Confirm the authoritative lookup supports a safe first-time decision.
+- Confirm one creation operation is authorized.
+- Confirm the wallet is created and verified.
+- Confirm the backend records the result.
+- Confirm subsequent synchronization returns the existing wallet instead of creating another.
+
+**Test 7: Storage failure**
+
+- Simulate durable ledger write failure.
+- Confirm that provisioning does not begin.
+- Confirm that no remote wallet creation request is sent.
+- Confirm that the backend returns a recoverable storage error.
+
+**Test 8: Multiple eligible wallets**
+
+- Return multiple eligible embedded Stellar wallets for one Privy user.
+- Confirm the backend does not create another wallet.
+- Confirm the correct conflict error is returned.
+- Confirm the verified Privy user ID appears in internal structured logs.
+- Confirm the frontend does not silently choose one wallet.
+
+### 8.2 Additional backend tests — mandatory
+
+**Test 9: Concurrent requests**
+
+Send multiple provisioning requests for the same Privy user simultaneously.
+
+Expected:
+- Only one logical provisioning operation is authorized.
+- Database uniqueness constraints hold.
+- No duplicate creation request is sent.
+- Other requests receive the existing operation status or confirmed wallet.
+
+**Test 10: Multiple backend instances**
+
+If the deployment architecture supports multiple backend instances, simulate two instances handling the same user simultaneously.
+
+Expected:
+- Durable locking and uniqueness prevent duplicate operations.
+- Process-local memory is not relied upon.
+
+If the current deployment uses only one instance, still ensure the data model and transaction design do not depend on process memory for correctness.
+
+**Test 11: Lost create response**
+
+Simulate Privy successfully creating a wallet but the backend losing the HTTP response.
+
+Expected:
+- Operation becomes reconciliation-required.
+- Backend queries Privy.
+- Existing wallet is discovered.
+- No second creation request is sent.
+
+**Test 12: Genuine provider failure**
+
+Simulate a provider response that definitively establishes that no wallet was created and no operation remains active.
+
+Expected:
+- Backend records the failure.
+- Reconciliation verifies the absence.
+- A controlled retry can be authorized.
+- No permanent lockout occurs.
+
+Do not simulate an ordinary timeout as definitive failure.
+
+**Test 13: Ambiguous provider failure**
+
+Simulate a timeout or connection interruption where the remote result is unknown.
+
+Expected:
+- Backend retains the unresolved operation.
+- No new creation request is authorized.
+- Reconciliation continues safely.
+- Manual review is available if the ambiguity cannot be resolved.
+
+**Test 14: Idempotency behaviour**
+
+If the verified Stellar creation API supports idempotency:
+
+- Reuse the same key for retries of the same logical operation.
+- Confirm the documented behaviour.
+- Confirm the system does not assume idempotency lasts forever.
+- Confirm a new attempt cannot bypass unresolved backend state.
+
+If the API does not support it for Stellar, document this and rely only on verified alternative safeguards.
+
+**Test 15: External ID uniqueness**
+
+If external IDs are supported for Stellar creation:
+
+- Confirm deterministic generation.
+- Confirm the same user receives the same intended external ID.
+- Confirm two users cannot receive the same identifier.
+- Confirm existing wallets can be discovered by that identifier.
+- Confirm unsupported external ID usage is rejected rather than silently ignored.
+
+**Test 16: Cross-device and cleared-storage scenario**
+
+- Authenticate the same Privy test user in two independent browser contexts.
+- Ensure one browser has no local provisioning marker.
+- Start provisioning in one context.
+- Request provisioning in the other context.
+- Confirm both contexts receive the backend's same authoritative operation state.
+- Confirm no second wallet is created.
+
+This test is essential. It demonstrates why browser storage cannot be the authority.
+
+### 8.3 Test quality rules
+
+- Do not merely test mocked frontend state transitions.
+- Test backend services and durable database behaviour.
+- Use a real test database or an appropriate database integration-test environment for uniqueness and transaction behaviour.
+- Mock Privy only where necessary to simulate specific provider responses.
+- Clearly label mocked tests.
+- Do not claim mocked tests prove real Privy propagation behaviour.
+- Do not fabricate provider responses and describe them as live API evidence.
+
+---
+
+## 9. REAL PRIVY INTEGRATION TEST — REQUIRED
+
+Automated tests are necessary but insufficient.
+
+The key failure mode is delayed propagation between a remote wallet creation request and the wallet appearing in the user's linked accounts.
+
+A mock can simulate this sequence, but it cannot prove that the real Privy service behaves correctly.
+
+After the implementation and automated tests pass, perform a controlled manual integration test using a dedicated development/test Privy account.
+
+Do not use production user accounts.
+
+Do not expose credentials or secrets.
+
+### 9.1 Delayed request and reload test
+
+Use browser developer tools and network throttling.
+
+1. Confirm the test Privy user has no existing eligible embedded Stellar wallet.
+2. Open TrustFlow in the development environment.
+3. Enable network throttling so the wallet creation request takes approximately ten seconds to complete, if the browser and request permit that.
+4. Begin the normal authentication and provisioning flow.
+5. Identify the wallet provisioning request in the browser's Network panel.
+6. Reload the page approximately five seconds after the request begins.
+7. Allow the original request and subsequent reconciliation to complete.
+8. Re-authenticate as the same Privy user if necessary.
+9. Observe the frontend state.
+10. Confirm that the frontend does not independently issue another wallet creation request.
+11. Query the authoritative Privy data for that verified user.
+12. Confirm the number of eligible embedded Stellar wallets.
+13. Confirm that exactly one wallet exists.
+14. Confirm TrustFlow retrieves and verifies the same wallet.
+15. Reload again and confirm that the wallet remains stable.
+
+### 9.2 Cross-browser test
+
+Using the same dedicated test Privy user:
+
+1. Open TrustFlow in a second independent browser context.
+2. Ensure it does not share the first browser's local storage.
+3. Authenticate as the same Privy user.
+4. Request wallet synchronization.
+5. Confirm the backend finds the already existing wallet.
+6. Confirm no new creation request occurs.
+7. Confirm the same wallet ID and Stellar address are returned.
+
+### 9.3 Recovery test
+
+Where a safe test scenario can be created:
+
+- Simulate a definitive provider failure.
+- Confirm the backend can authorize a controlled new attempt after authoritative reconciliation.
+
+Also test an ambiguous timeout:
+
+- Confirm the backend does not authorize another creation attempt merely because time has passed.
+- Confirm reconciliation or manual review is used.
+
+### 9.4 Evidence requirements
+
+Record:
+- Test date.
+- Environment.
+- Test account's Privy user ID.
+- Relevant backend provisioning record ID.
+- Number of eligible Stellar wallets before and after.
+- Whether a reload occurred during the request.
+- Number of creation requests observed.
+- Final wallet ID.
+- Final Stellar address.
+- Relevant redacted request/response outcomes.
+- Any failures or unexpected behaviour.
+
+Do not include secrets, access tokens, authorization headers, or private wallet material.
+
+If live Privy testing cannot be performed, report it as pending. Do not mark it passed.
+
+---
+
+## 10. SCOPE BOUNDARIES — DO NOT CROSS
+
+This phase is specifically about backend-authoritative Privy Stellar wallet provisioning.
+
+Do not begin Step 3.
+
+Do not begin Soroban signing integration.
+
+Do not integrate Trustless Work yet.
+
+Do not implement escrow contracts.
+
+Do not modify payment or release logic.
+
+Do not redesign authentication screens.
+
+Do not change the approved product UI except for necessary wallet provisioning status and recovery messaging.
+
+Do not add Freighter fallback.
+
+Do not silently change wallet custody.
+
+Do not introduce new authentication providers.
+
+Do not merge accounts based on email.
+
+Do not expose or request private keys, seed phrases, or Privy App Secrets.
+
+Do not change accepted Step 1 identity verification unless a specific defect makes a narrowly scoped correction unavoidable. If such a defect is found, explain it before changing the accepted implementation.
+
+Do not claim production readiness based on mocked tests.
+
+---
+
+## 11. REQUIRED IMPLEMENTATION ORDER
+
+Work in this exact sequence.
+
+### Phase A — Repository inspection and Privy research
+
+- Inspect the existing code.
+- Inspect installed dependency versions.
+- Inspect official Privy documentation.
+- Verify the exact Stellar server-side wallet creation and discovery capabilities.
+- Verify frontend retrieval compatibility.
+- Verify idempotency and external ID support for Stellar.
+- Produce the compatibility report.
+
+If compatibility cannot be established, stop and report the blocker.
+
+### Phase B — Backend architecture and data model
+
+Only after Phase A passes:
+
+- Inspect the existing database.
+- Design the durable provisioning ledger.
+- Add uniqueness constraints.
+- Add atomic state transitions.
+- Add backend concurrency protection.
+- Define provisioning outcomes and error codes.
+- Preserve Step 1 identity verification.
+
+### Phase C — Backend provisioning implementation
+
+- Implement authoritative wallet discovery.
+- Implement safe first-time provisioning.
+- Implement the verified compatible creation mechanism.
+- Implement stable wallet identity if supported.
+- Implement idempotency if supported.
+- Implement reconciliation.
+- Implement safe recovery.
+- Implement structured logging.
+- Implement backend tests.
+
+### Phase D — Frontend lifecycle integration
+
+- Remove frontend authority to create wallets based on missing linked accounts.
+- Integrate the backend provisioning decision.
+- Implement safe reconciliation and retry.
+- Preserve email OTP and Google OAuth.
+- Preserve account switching isolation.
+- Preserve logout behaviour.
+- Ensure wallet readiness requires backend/frontend wallet identity matching.
+- Update frontend tests.
+
+### Phase E — Automated verification
+
+Run the complete relevant test suite.
+
+Run TypeScript checks.
+
+Run the production build.
+
+Inspect the final diff.
+
+Fix regressions before proceeding.
+
+### Phase F — Real integration testing
+
+Perform the controlled delayed-request/reload test and cross-browser test.
+
+If live testing is not possible, clearly state why and leave the integration acceptance criteria pending.
+
+Do not proceed to Step 3 until this phase has been reviewed and accepted.
+
+---
+
+## 12. REQUIRED COMMANDS AND VERIFICATION
+
+Inspect the existing package scripts first.
+
+Run the appropriate project commands, including where available:
+
+`npm test`
+
+`npx tsc --noEmit`
+
+`npm run build`
+
+If the backend has separate scripts, run its full test suite and type checks as well.
+
+Do not assume all commands exist. Inspect `package.json` and backend package scripts first.
+
+Report:
+- Exact commands executed.
+- Pass/fail status.
+- Number of tests passed and failed.
+- TypeScript errors.
+- Build errors.
+- Any skipped tests and why.
+
+Do not report a command as passed if it was not executed.
+
+---
+
+## 13. FINAL REPORT FORMAT
+
+When finished, return a detailed report using these exact headings.
+
+### A. Executive summary
+Explain what changed and whether backend-authoritative provisioning is now implemented.
+
+### B. Privy compatibility research
+Document:
+- Official endpoints and SDK methods used.
+- Verified Stellar support.
+- Wallet ownership behaviour.
+- External ID support.
+- Idempotency support and limitations.
+- Frontend retrieval compatibility.
+- Signing compatibility findings.
+- Official documentation references.
+
+Clearly distinguish verified facts from unresolved assumptions.
+
+### C. Architecture changes
+Explain:
+- Backend authority.
+- Durable provisioning ledger.
+- State machine.
+- Concurrency protection.
+- Wallet discovery.
+- Creation authorization.
+- Reconciliation.
+- Recovery.
+
+### D. Files changed
+List every created, modified, and deleted file with a short explanation.
+
+### E. API changes
+Document routes, request bodies, response structures, status codes, and error codes.
+
+Do not include secrets.
+
+### F. Security review
+Explain:
+- JWT verification.
+- Privy subject verification.
+- Server-only App Secret handling.
+- Client spoofing protection.
+- Wallet ownership checks.
+- Concurrency protection.
+- Logging safety.
+
+### G. Automated test results
+List all original eight scenarios and all additional tests.
+
+For each, state:
+- Pass/fail.
+- What was tested.
+- Whether the test was mocked, integration-based, or database-backed.
+
+### H. Manual Privy integration results
+Report:
+- Delayed-request/reload test.
+- Cross-browser test.
+- Recovery test.
+- Number of wallets found.
+- Number of creation requests observed.
+- Whether wallet retrieval matched backend verification.
+
+If not performed, state `NOT PERFORMED` and explain why.
+
+### I. Build and type-check results
+Include exact commands and results.
+
+### J. Remaining risks and limitations
+List every known unresolved risk.
+
+Do not hide limitations involving:
+- Privy API consistency.
+- Idempotency retention.
+- External ID support.
+- Server-side wallet ownership.
+- Frontend SDK compatibility.
+- Signing compatibility.
+- Multi-instance concurrency.
+- Recovery after ambiguous provider outcomes.
+
+### K. Acceptance verdict
+Choose exactly one:
+
+- `PASS — READY FOR STEP 3 REVIEW`
+- `PARTIAL PASS — IMPLEMENTATION COMPLETE, LIVE VERIFICATION PENDING`
+- `BLOCKED — PRIVY COMPATIBILITY OR ARCHITECTURAL REQUIREMENT UNRESOLVED`
+- `FAIL — DUPLICATE OR LOCKOUT RISK REMAINS`
+
+Explain the verdict.
+
+---
+
+## 14. FINAL ACCEPTANCE CRITERIA
+
+Step 2.2 is not accepted merely because the application builds.
+
+All of the following must be true:
+
+1. Backend identity verification remains intact.
+2. Backend wallet discovery is authoritative and uses verified Privy identity.
+3. The frontend cannot independently authorize wallet creation.
+4. Wallet creation is performed only through a verified compatible mechanism.
+5. One Privy user maps to one TrustFlow embedded Stellar wallet record.
+6. Durable uniqueness and concurrency protection are implemented.
+7. Reloads cannot trigger a second creation operation.
+8. A second browser or device cannot bypass the backend's provisioning state.
+9. Cleared browser storage cannot bypass the backend's provisioning state.
+10. Temporary empty linked-account responses cannot authorize creation.
+11. Ambiguous provider outcomes cannot trigger blind retries.
+12. Genuine provider failure has a sanctioned recovery path when authoritative evidence permits it.
+13. Unresolvable ambiguity leads to a clear recoverable/manual-review state, not silent permanent lockout.
+14. Multiple eligible wallets are detected and reported.
+15. Frontend wallet identity matches backend-confirmed wallet identity.
+16. The original eight tests pass.
+17. Additional backend and concurrency tests pass.
+18. TypeScript checks pass.
+19. Production build passes.
+20. The real delayed-request/reload integration test is performed and its evidence is reported before full acceptance.
+
+If any critical condition is not met, do not claim the problem is solved.
+
+**The goal is not to make duplicate creation less likely on one browser. The goal is to make the backend the single authority for wallet identity and provisioning, with safe recovery and no reliance on browser-local state for correctness.**
+
+Begin with Phase A. Inspect first, research second, report the compatibility findings, and only then proceed to implementation if the required compatibility is proven.

@@ -453,64 +453,15 @@ export class AuthService {
       }
     }
 
-    const nowIso = new Date().toISOString();
-    // 4. Identify user strictly by verified Privy subject (never auto-merge by email across providers)
-    const existingBySub = await this.repo.findUserByProviderSubject("privy", privySub);
-    let user = existingBySub;
-    let isNewUser = false;
+    // 4. Atomically lookup, validate wallet uniqueness/immutability, and upsert verified Privy user
+    const { user, isNewUser } = await this.repo.upsertPrivyUser({
+      privySub,
+      stellarAddress: authoritativeWallet,
+      email: verifiedIdentity.email,
+      displayName: verifiedIdentity.displayName,
+      nowIso: new Date().toISOString(),
+    });
 
-    // 5. Enforce wallet uniqueness across all accounts
-    const walletOwner = await this.repo.findUserByWalletAddress(authoritativeWallet);
-    if (walletOwner && walletOwner.id !== user?.id) {
-      throw new AppError(
-        409,
-        "WALLET_ALREADY_LINKED",
-        "This Stellar wallet address is already linked to another user account."
-      );
-    }
-
-    // Never use unverified client-supplied email or displayName
-    const authoritativeEmail = verifiedIdentity.email;
-    const authoritativeDisplayName = verifiedIdentity.displayName;
-
-    if (!user) {
-      isNewUser = true;
-      user = {
-        id: `usr-${crypto.randomUUID()}`,
-        email: authoritativeEmail,
-        displayName:
-          authoritativeDisplayName ||
-          (authoritativeEmail ? authoritativeEmail.split("@")[0] : "Privy User"),
-        avatar: "🚀",
-        provider: "privy",
-        authVerified: true,
-        providerSubject: privySub,
-        stellarAddress: authoritativeWallet,
-        walletCustody: "privy_embedded",
-        isSandbox: false,
-        createdAt: nowIso,
-        lastLoginAt: nowIso,
-      };
-    } else {
-      // Preserve wallet immutability: reject if the user already has a different bound wallet
-      if (user.stellarAddress && user.stellarAddress !== authoritativeWallet) {
-        throw new AppError(
-          409,
-          "WALLET_IMMUTABLE",
-          "Account already has a bound Privy Stellar wallet address."
-        );
-      }
-      user = {
-        ...user,
-        email: authoritativeEmail ?? user.email,
-        displayName: authoritativeDisplayName || user.displayName,
-        stellarAddress: user.stellarAddress || authoritativeWallet,
-        walletCustody: "privy_embedded",
-        lastLoginAt: nowIso,
-      };
-    }
-
-    await this.repo.saveUser(user);
     const session = await this.issueSession(user);
     return { ...session, isNewUser };
   }

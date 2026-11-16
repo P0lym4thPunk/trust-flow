@@ -5,7 +5,11 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import http from "http";
-import { createBackendApp } from "../backend/src/index";
+import {
+  createBackendApp,
+  FileAuthRepository,
+  type AuthRepository,
+} from "../backend/src/index";
 import { getRuntimeConfig } from "../backend/src/config/runtime.config";
 import { SANDBOX_PERSONAS, OtpDeliveryProvider } from "../backend/src/services/auth.service";
 import { fallbackDraft, sanitizeForAi } from "../backend/src/services/ai.service";
@@ -1730,6 +1734,379 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
         }),
       });
       assert.strictEqual(acceptRes.status, 403);
+    });
+
+    it("M. Atomic privy-sync: concurrent requests for the same new Privy subject create exactly one UserRecord and valid sessions", async () => {
+      const keys = createPrivyKeys();
+      const targetSub = "did:privy:concurrent-same-sub";
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        fetchFn: (async (url: string) => {
+          if (url === `https://api.privy.io/v1/users/${encodeURIComponent(targetSub)}` ||
+              url === `https://api.privy.io/v1/users/${targetSub}`) {
+            // Brief async yield so all concurrent Privy lookups overlap before upsert
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            return new Response(
+              JSON.stringify({
+                id: targetSub,
+                linked_accounts: [
+                  {
+                    type: "email",
+                    address: "concurrent@example.com",
+                    verified_at: 1731974895,
+                  },
+                  {
+                    type: "wallet",
+                    address: ALICE_ADDR,
+                    chain_type: "stellar",
+                    wallet_client_type: "privy",
+                    connector_type: "embedded",
+                    verified_at: 1731974895,
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      const jwt = issuePrivyToken(keys.appId, targetSub, keys.privPem);
+      const responses = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accessToken: jwt, stellarAddress: ALICE_ADDR }),
+          })
+        )
+      );
+
+      for (const res of responses) {
+        assert.strictEqual(res.status, 200);
+      }
+      const payloads = (await Promise.all(responses.map((r) => r.json()))) as Array<{
+        token: string;
+        user: { id: string; providerSubject: string; stellarAddress: string };
+        isNewUser: boolean;
+      }>;
+
+      const userIds = new Set(payloads.map((p) => p.user.id));
+      assert.strictEqual(userIds.size, 1, "All concurrent requests must return the exact same user.id");
+
+      const newUserCount = payloads.filter((p) => p.isNewUser === true).length;
+      const existingUserCount = payloads.filter((p) => p.isNewUser === false).length;
+      assert.strictEqual(newUserCount, 1, "Exactly one concurrent response must report isNewUser: true");
+      assert.strictEqual(existingUserCount, 3, "Remaining concurrent responses must report isNewUser: false");
+
+      const usersMap = readJsonFile(path.join(tempDir, "users.json"));
+      const matchingUsers = Object.values(usersMap).filter(
+        (u: any) => u.provider === "privy" && u.providerSubject === targetSub
+      );
+      assert.strictEqual(matchingUsers.length, 1, "users.json must contain exactly one UserRecord");
+
+      for (const payload of payloads) {
+        const meRes = await fetch(`${srv.baseUrl}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${payload.token}` },
+        });
+        assert.strictEqual(meRes.status, 200);
+        const meBody = (await meRes.json()) as { user: { id: string } | null };
+        assert.strictEqual(meBody.user?.id, payloads[0].user.id);
+      }
+    });
+
+    it("N. Atomic privy-sync: concurrent requests from different Privy subjects claiming the same Stellar wallet yield one success and one 409 WALLET_ALREADY_LINKED", async () => {
+      const keys = createPrivyKeys();
+      const subA = "did:privy:race-wallet-a";
+      const subB = "did:privy:race-wallet-b";
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        fetchFn: (async (url: string) => {
+          const prefix = "https://api.privy.io/v1/users/";
+          if (url.startsWith(prefix)) {
+            const sub = decodeURIComponent(url.slice(prefix.length));
+            if (sub === subA || sub === subB) {
+              await new Promise((resolve) => setTimeout(resolve, 25));
+              return new Response(
+                JSON.stringify({
+                  id: sub,
+                  linked_accounts: [
+                    {
+                      type: "wallet",
+                      address: BOB_ADDR,
+                      chain_type: "stellar",
+                      wallet_client_type: "privy",
+                      connector_type: "embedded",
+                      verified_at: 1731974895,
+                    },
+                  ],
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      const jwtA = issuePrivyToken(keys.appId, subA, keys.privPem);
+      const jwtB = issuePrivyToken(keys.appId, subB, keys.privPem);
+
+      const [resA, resB] = await Promise.all([
+        fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken: jwtA }),
+        }).then(async (r) => ({ sub: subA, status: r.status, body: (await r.json()) as any })),
+        fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken: jwtB }),
+        }).then(async (r) => ({ sub: subB, status: r.status, body: (await r.json()) as any })),
+      ]);
+
+      const outcomes = [resA, resB];
+      const winners = outcomes.filter((o) => o.status === 200);
+      const conflicts = outcomes.filter((o) => o.status === 409);
+
+      assert.strictEqual(winners.length, 1, "Exactly one concurrent claimant must succeed");
+      assert.strictEqual(conflicts.length, 1, "Exactly one concurrent claimant must receive 409");
+      assert.strictEqual(conflicts[0].body.code, "WALLET_ALREADY_LINKED");
+      assert.strictEqual(winners[0].body.user.stellarAddress, BOB_ADDR);
+
+      const usersMap = readJsonFile(path.join(tempDir, "users.json"));
+      const walletOwners = Object.values(usersMap).filter((u: any) => u.stellarAddress === BOB_ADDR);
+      assert.strictEqual(walletOwners.length, 1, "Exactly one UserRecord may own the Stellar wallet");
+      assert.strictEqual((walletOwners[0] as any).providerSubject, winners[0].sub);
+
+      const meRes = await fetch(`${srv.baseUrl}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${winners[0].body.token}` },
+      });
+      assert.strictEqual(meRes.status, 200);
+      assert.strictEqual(((await meRes.json()) as any).user?.id, winners[0].body.user.id);
+    });
+
+    it("O. Atomic privy-sync: preserves existing UserRecord fields, retains id/createdAt on return, and enforces wallet immutability", async () => {
+      const keys = createPrivyKeys();
+      const targetSub = "did:privy:preserve-fields-user";
+      let upstreamWallet = ALICE_ADDR;
+
+      // Seed existing Privy user in users.json with custom avatar, original createdAt, and extra persisted metadata
+      const originalCreatedAt = "2025-01-15T10:00:00.000Z";
+      const seededUserId = "usr-seeded-privy-123";
+      fs.writeFileSync(
+        path.join(tempDir, "users.json"),
+        JSON.stringify(
+          {
+            [seededUserId]: {
+              id: seededUserId,
+              email: "existing@example.com",
+              displayName: "Original Display",
+              avatar: "🛡️",
+              provider: "privy",
+              authVerified: true,
+              providerSubject: targetSub,
+              stellarAddress: ALICE_ADDR,
+              walletCustody: "privy_embedded",
+              isSandbox: false,
+              createdAt: originalCreatedAt,
+              lastLoginAt: "2025-01-16T00:00:00.000Z",
+              customMetadata: { tier: "beta", notes: "preserve-me" },
+            },
+          },
+          null,
+          2
+        ),
+        "utf-8"
+      );
+
+      const srv = await startIsolatedServer({
+        tempDir,
+        privyAppId: keys.appId,
+        privyAppSecret: keys.appSecret,
+        privyVerificationKey: keys.pubPem,
+        fetchFn: (async (url: string) => {
+          if (url === `https://api.privy.io/v1/users/${targetSub}`) {
+            return new Response(
+              JSON.stringify({
+                id: targetSub,
+                linked_accounts: [
+                  {
+                    type: "wallet",
+                    address: upstreamWallet,
+                    chain_type: "stellar",
+                    wallet_client_type: "privy",
+                    connector_type: "embedded",
+                    verified_at: 1731974895,
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+      activeClosers.push(srv.close);
+
+      const jwt = issuePrivyToken(keys.appId, targetSub, keys.privPem);
+      const returningRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: jwt }),
+      });
+      assert.strictEqual(returningRes.status, 200);
+      const returningBody = (await returningRes.json()) as any;
+      assert.strictEqual(returningBody.isNewUser, false);
+      assert.strictEqual(returningBody.user.id, seededUserId);
+      assert.strictEqual(returningBody.user.createdAt, originalCreatedAt);
+      assert.strictEqual(returningBody.user.avatar, "🛡️");
+      assert.strictEqual(returningBody.user.email, "existing@example.com");
+      assert.strictEqual(returningBody.user.displayName, "Original Display");
+      assert.deepStrictEqual(returningBody.user.customMetadata, { tier: "beta", notes: "preserve-me" });
+      assert.notStrictEqual(returningBody.user.lastLoginAt, "2025-01-16T00:00:00.000Z");
+
+      const persistedAfterReturn = readJsonFile(path.join(tempDir, "users.json"));
+      assert.strictEqual(Object.keys(persistedAfterReturn).length, 1);
+      assert.deepStrictEqual(persistedAfterReturn[seededUserId].customMetadata, {
+        tier: "beta",
+        notes: "preserve-me",
+      });
+
+      // Attempt to change bound Stellar wallet for existing user -> 409 WALLET_IMMUTABLE, disk unchanged
+      upstreamWallet = BOB_ADDR;
+      const immutableRes = await fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: jwt }),
+      });
+      assert.strictEqual(immutableRes.status, 409);
+      assert.strictEqual(((await immutableRes.json()) as any).code, "WALLET_IMMUTABLE");
+
+      const persistedAfterConflict = readJsonFile(path.join(tempDir, "users.json"));
+      assert.strictEqual(persistedAfterConflict[seededUserId].stellarAddress, ALICE_ADDR);
+    });
+
+    it("P. Atomic privy-sync: session-save failure followed by retry reuses the same UserRecord without creating duplicates", async () => {
+      const keys = createPrivyKeys();
+      const targetSub = "did:privy:session-fail-retry";
+      const realRepo = new FileAuthRepository(tempDir);
+      let failNextSessionSave = true;
+
+      const wrappedRepo: AuthRepository = {
+        findUserById: (id) => realRepo.findUserById(id),
+        findUserByEmail: (email) => realRepo.findUserByEmail(email),
+        findUserByProviderSubject: (provider, subject) =>
+          realRepo.findUserByProviderSubject(provider, subject),
+        findUserByWalletAddress: (address) => realRepo.findUserByWalletAddress(address),
+        saveUser: (user) => realRepo.saveUser(user),
+        upsertPrivyUser: (params) => realRepo.upsertPrivyUser(params),
+        saveSession: async (session) => {
+          if (failNextSessionSave) {
+            failNextSessionSave = false;
+            throw new Error("Simulated transient session store failure");
+          }
+          return realRepo.saveSession(session);
+        },
+        findSession: (token) => realRepo.findSession(token),
+        deleteSession: (token) => realRepo.deleteSession(token),
+        saveOtp: (email, record) => realRepo.saveOtp(email, record),
+        findOtp: (email) => realRepo.findOtp(email),
+        deleteOtp: (email) => realRepo.deleteOtp(email),
+      };
+
+      const cfg = getRuntimeConfig({ dataDir: tempDir, allowDevSandbox: true });
+      cfg.auth.privyAppId = keys.appId;
+      cfg.auth.privyAppSecret = keys.appSecret;
+      cfg.auth.privyVerificationKey = keys.pubPem;
+
+      const backend = createBackendApp({
+        config: cfg,
+        authRepo: wrappedRepo,
+        fetchFn: (async (url: string) => {
+          if (url === `https://api.privy.io/v1/users/${targetSub}`) {
+            return new Response(
+              JSON.stringify({
+                id: targetSub,
+                linked_accounts: [
+                  {
+                    type: "email",
+                    address: "retry@example.com",
+                    verified_at: 1731974895,
+                  },
+                  {
+                    type: "wallet",
+                    address: CHARLIE_ADDR,
+                    chain_type: "stellar",
+                    wallet_client_type: "privy",
+                    connector_type: "embedded",
+                    verified_at: 1731974895,
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          return new Response("{}", { status: 404 });
+        }) as typeof fetch,
+      });
+
+      const server = http.createServer(backend.app);
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+      const addr = server.address() as { port: number };
+      const baseUrl = `http://127.0.0.1:${addr.port}`;
+      activeClosers.push(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+      const jwt = issuePrivyToken(keys.appId, targetSub, keys.privPem);
+
+      // 1. First sync commits user record but fails during session persistence
+      const firstRes = await fetch(`${baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: jwt }),
+      });
+      assert.strictEqual(firstRes.status, 500);
+
+      const usersAfterFail = readJsonFile(path.join(tempDir, "users.json"));
+      const sessionsAfterFail = readJsonFile(path.join(tempDir, "sessions.json"));
+      assert.strictEqual(Object.keys(usersAfterFail).length, 1);
+      assert.strictEqual(Object.keys(sessionsAfterFail).length, 0);
+      const persistedUserId = Object.keys(usersAfterFail)[0];
+
+      // 2. Retry succeeds, reuses the exact committed user, and creates one valid session
+      const retryRes = await fetch(`${baseUrl}/api/auth/privy-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: jwt }),
+      });
+      assert.strictEqual(retryRes.status, 200);
+      const retryBody = (await retryRes.json()) as any;
+      assert.strictEqual(retryBody.isNewUser, false);
+      assert.strictEqual(retryBody.user.id, persistedUserId);
+
+      const usersAfterRetry = readJsonFile(path.join(tempDir, "users.json"));
+      const sessionsAfterRetry = readJsonFile(path.join(tempDir, "sessions.json"));
+      assert.strictEqual(Object.keys(usersAfterRetry).length, 1);
+      assert.strictEqual(Object.keys(sessionsAfterRetry).length, 1);
+
+      const meRes = await fetch(`${baseUrl}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${retryBody.token}` },
+      });
+      assert.strictEqual(meRes.status, 200);
+      const meBody = (await meRes.json()) as any;
+      assert.strictEqual(meBody.user?.id, persistedUserId);
+      assert.strictEqual(meBody.wallet?.address, CHARLIE_ADDR);
     });
   });
 });

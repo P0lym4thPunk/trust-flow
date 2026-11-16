@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { MotionConfig } from "motion/react";
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useUser } from "@privy-io/react-auth";
+import { useCreateWallet } from "@privy-io/react-auth/extended-chains";
 import { LandingPage } from "./components/LandingPage";
 import { NavigationShell } from "./components/NavigationShell";
 import { ConversationalWorkspace } from "./components/ConversationalWorkspace";
 import { AgreementDetailRoom } from "./components/AgreementDetailRoom";
 import { AgreementListView } from "./components/AgreementListView";
 import { AuthModal } from "./components/AuthModal";
-import { AuthProvider, useAuth } from "./lib/auth/AuthContext";
+import { AuthProvider, IS_PRIVY_WALLET_TEST_MODE, useAuth } from "./lib/auth/AuthContext";
 import { AgreementRecord, TransactionType } from "./types/agreement";
 import {
   WalletAccount,
@@ -18,6 +19,12 @@ import {
   IS_PRIVY_CONFIGURED,
   PrivyAdapterProvider,
 } from "./lib/auth/pollarPrivy";
+
+// TEMPORARY PHASE 2.2A STEP 6 DEV-ONLY SIGNING TEST HARNESS (tree-shaken in production builds)
+const LazyDevPrivySigningTestPanel =
+  !import.meta.env.PROD && IS_PRIVY_WALLET_TEST_MODE
+    ? React.lazy(() => import("./components/DevPrivySigningTestPanel"))
+    : null;
 
 function TrustFlowMain() {
   const [inApp, setInApp] = useState(false);
@@ -32,7 +39,9 @@ function TrustFlowMain() {
 
   const {
     user,
+    authStage,
     isAuthenticated,
+    isAuthModalOpen,
     openAuthModal,
     closeAuthModal,
     getAuthHeaders,
@@ -42,6 +51,7 @@ function TrustFlowMain() {
   } = useAuth();
 
   const prevAuthRef = useRef(isAuthenticated);
+  const prevStageRef = useRef(authStage);
 
   // Sync dark theme class on documentElement
   useEffect(() => {
@@ -58,13 +68,24 @@ function TrustFlowMain() {
       setInApp(true);
       setActiveTab("workspace");
       setSelectedAgreement(null);
+      if (isAuthModalOpen) {
+        closeAuthModal();
+      }
     } else if (prevAuthRef.current && !isAuthenticated) {
       setInApp(false);
       setAgreements([]);
       setSelectedAgreement(null);
     }
     prevAuthRef.current = isAuthenticated;
-  }, [isAuthenticated, inApp]);
+  }, [isAuthenticated, inApp, isAuthModalOpen, closeAuthModal]);
+
+  // Surface recoverable sync_failed UI automatically (including after OAuth redirects)
+  useEffect(() => {
+    if (prevStageRef.current !== "sync_failed" && authStage === "sync_failed" && !isAuthModalOpen) {
+      openAuthModal();
+    }
+    prevStageRef.current = authStage;
+  }, [authStage, isAuthModalOpen, openAuthModal]);
 
   // Fetch agreements strictly for authenticated caller
   const fetchAgreements = useCallback(async () => {
@@ -220,8 +241,25 @@ function TrustFlowMain() {
 }
 
 function PrivyAuthWrapper({ children }: { children: React.ReactNode }) {
-  const { getAccessToken } = usePrivy();
-  return <AuthProvider getPrivyAccessToken={getAccessToken}>{children}</AuthProvider>;
+  const { ready, authenticated, user, getAccessToken, logout } = usePrivy();
+  const { refreshUser } = useUser();
+  const { createWallet } = useCreateWallet();
+
+  return (
+    <AuthProvider
+      privyRuntime={{
+        ready,
+        authenticated,
+        user: user as any,
+        getAccessToken,
+        refreshUser: () => refreshUser() as Promise<any>,
+        createWallet: ({ chainType }) => createWallet({ chainType: chainType as any }),
+        logout,
+      }}
+    >
+      {children}
+    </AuthProvider>
+  );
 }
 
 export default function App() {
@@ -231,6 +269,13 @@ export default function App() {
         <PrivyAdapterProvider adapter={pollarPrivyAdapter}>
           <PrivyAuthWrapper>
             <TrustFlowMain />
+            {!import.meta.env.PROD &&
+              IS_PRIVY_WALLET_TEST_MODE &&
+              LazyDevPrivySigningTestPanel && (
+                <React.Suspense fallback={null}>
+                  <LazyDevPrivySigningTestPanel />
+                </React.Suspense>
+              )}
           </PrivyAuthWrapper>
         </PrivyAdapterProvider>
       </MotionConfig>

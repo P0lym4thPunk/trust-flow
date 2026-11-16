@@ -1,6 +1,20 @@
+import crypto from "crypto";
 import path from "path";
-import { OtpRecord, SessionRecord, UserRecord } from "../types/backend.types.js";
+import { AppError, OtpRecord, SessionRecord, UserRecord } from "../types/backend.types.js";
 import { JsonFileStore } from "./jsonStore.js";
+
+export interface UpsertPrivyUserParams {
+  privySub: string;
+  stellarAddress: string;
+  email: string | null;
+  displayName: string | null;
+  nowIso: string;
+}
+
+export interface UpsertPrivyUserResult {
+  user: UserRecord;
+  isNewUser: boolean;
+}
 
 export interface AuthRepository {
   findUserById(id: string): Promise<UserRecord | null>;
@@ -8,6 +22,7 @@ export interface AuthRepository {
   findUserByProviderSubject(provider: UserRecord["provider"], subject: string): Promise<UserRecord | null>;
   findUserByWalletAddress(address: string): Promise<UserRecord | null>;
   saveUser(user: UserRecord): Promise<UserRecord>;
+  upsertPrivyUser(params: UpsertPrivyUserParams): Promise<UpsertPrivyUserResult>;
 
   saveSession(session: SessionRecord): Promise<SessionRecord>;
   findSession(token: string): Promise<SessionRecord | null>;
@@ -59,6 +74,76 @@ export class FileAuthRepository implements AuthRepository {
     return this.usersStore.update((current) => {
       const next = { ...current, [user.id]: structuredClone(user) };
       return { next, result: structuredClone(user) };
+    });
+  }
+
+  async upsertPrivyUser(params: UpsertPrivyUserParams): Promise<UpsertPrivyUserResult> {
+    return this.usersStore.update((current) => {
+      const users = Object.values(current);
+      const existingBySub = users.find(
+        (u) => u.provider === "privy" && u.providerSubject === params.privySub
+      );
+      const walletOwner = users.find((u) => u.stellarAddress === params.stellarAddress);
+
+      if (walletOwner && walletOwner.id !== existingBySub?.id) {
+        throw new AppError(
+          409,
+          "WALLET_ALREADY_LINKED",
+          "This Stellar wallet address is already linked to another user account."
+        );
+      }
+
+      let user: UserRecord;
+      let isNewUser: boolean;
+
+      if (!existingBySub) {
+        isNewUser = true;
+        user = {
+          id: `usr-${crypto.randomUUID()}`,
+          email: params.email,
+          displayName:
+            params.displayName ||
+            (params.email ? params.email.split("@")[0] : "Privy User"),
+          avatar: "🚀",
+          provider: "privy",
+          authVerified: true,
+          providerSubject: params.privySub,
+          stellarAddress: params.stellarAddress,
+          walletCustody: "privy_embedded",
+          isSandbox: false,
+          createdAt: params.nowIso,
+          lastLoginAt: params.nowIso,
+        };
+      } else {
+        if (existingBySub.isSandbox) {
+          throw new AppError(
+            403,
+            "SANDBOX_ACCOUNT_CONFLICT",
+            "Sandbox accounts cannot be bound to a Privy identity."
+          );
+        }
+        if (existingBySub.stellarAddress && existingBySub.stellarAddress !== params.stellarAddress) {
+          throw new AppError(
+            409,
+            "WALLET_IMMUTABLE",
+            "Account already has a bound Privy Stellar wallet address."
+          );
+        }
+
+        isNewUser = false;
+        const existing = structuredClone(existingBySub);
+        user = {
+          ...existing,
+          email: params.email ?? existing.email,
+          displayName: params.displayName || existing.displayName,
+          stellarAddress: existing.stellarAddress || params.stellarAddress,
+          walletCustody: "privy_embedded",
+          lastLoginAt: params.nowIso,
+        };
+      }
+
+      const next = { ...current, [user.id]: structuredClone(user) };
+      return { next, result: { user: structuredClone(user), isNewUser } };
     });
   }
 
