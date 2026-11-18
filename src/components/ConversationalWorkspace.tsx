@@ -15,15 +15,18 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { AgreementRecord, AgreementTerms, CheckerAuditResult, TransactionType } from "../types/agreement";
-import { STELLAR_TESTNET_CONFIG, toStroopUnits, validateStellarAddress } from "../lib/stellar/config";
+import { STELLAR_TESTNET_CONFIG, formatAddress, toStroopUnits, validateStellarAddress } from "../lib/stellar/config";
 import { computeAgreementHash } from "../lib/hash";
 import { getAgreementVisualStatus, getToneClasses } from "../lib/agreementStatus";
-import { useAuth } from "../lib/auth/AuthContext";
+import { useAuth, type UserWalletRecord } from "../lib/auth/AuthContext";
+import { formatStellarProviderName } from "../lib/stellar/walletsKit";
 
 interface ConversationalWorkspaceProps {
   initialType?: TransactionType;
   currentUserAddress: string;
   currentUserName?: string;
+  availableWallets?: UserWalletRecord[];
+  primaryWalletAddress?: string | null;
   onAgreementCreated: (agreement: AgreementRecord) => void;
   agreements?: AgreementRecord[];
   onSelectAgreement?: (agreement: AgreementRecord) => void;
@@ -34,6 +37,8 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
   initialType = "WORK",
   currentUserAddress,
   currentUserName,
+  availableWallets,
+  primaryWalletAddress,
   onAgreementCreated,
   agreements = [],
   onSelectAgreement,
@@ -41,7 +46,41 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
 }) => {
   const shouldReduceMotion = useReducedMotion();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { getAuthHeaders } = useAuth();
+  const { authenticatedFetch, user } = useAuth();
+  const prevUserAddrRef = useRef(currentUserAddress);
+
+  const rawWallets = availableWallets ?? user?.wallets;
+  const verifiedSelectableWallets: UserWalletRecord[] = (rawWallets || []).filter(
+    (w) =>
+      Boolean(w) &&
+      w.status === "active" &&
+      Boolean(w.address) &&
+      validateStellarAddress(w.address) &&
+      w.verificationMethod !== "legacy_unverified"
+  );
+
+  const defaultSelectedWalletAddress = (() => {
+    if (verifiedSelectableWallets.length > 0) {
+      const embeddedPrimary = verifiedSelectableWallets.find(
+        (w) => w.isPrimary || w.custody === "privy_embedded"
+      );
+      if (embeddedPrimary) return embeddedPrimary.address;
+      if (primaryWalletAddress) {
+        const matched = verifiedSelectableWallets.find((w) => w.address === primaryWalletAddress);
+        if (matched) return matched.address;
+      }
+      return verifiedSelectableWallets[0].address;
+    }
+    if (Array.isArray(rawWallets)) {
+      return "";
+    }
+    return currentUserAddress;
+  })();
+
+  const [selectedWalletAddress, setSelectedWalletAddress] = useState<string>(
+    defaultSelectedWalletAddress
+  );
+  const [walletSelectionNotice, setWalletSelectionNotice] = useState<string | null>(null);
 
   // Mode: "overview" (Conversational starting point) or "guided_creator" (6-step flow)
   const [viewMode, setViewMode] = useState<"overview" | "guided_creator">("overview");
@@ -73,6 +112,60 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
 
   const validAgreements = agreements.filter((a) => a && a.id && a.title);
   const recentAgreements = validAgreements.slice(0, 2);
+
+  // Reset transient workspace draft/audit/wallet state when active user address changes
+  useEffect(() => {
+    if (prevUserAddrRef.current !== currentUserAddress) {
+      prevUserAddrRef.current = currentUserAddress;
+      setViewMode("overview");
+      setCurrentStep(1);
+      setClarification(null);
+      setCheckerAudit(null);
+      setErrorMessage(null);
+      setStepValidationError(null);
+      setWalletSelectionNotice(null);
+      setSelectedWalletAddress(defaultSelectedWalletAddress);
+    }
+  }, [currentUserAddress, defaultSelectedWalletAddress]);
+
+  // Invalidate stale wallet selection if a previously selected external wallet is unlinked
+  useEffect(() => {
+    if (Array.isArray(rawWallets)) {
+      if (verifiedSelectableWallets.length === 0) {
+        if (selectedWalletAddress) {
+          setSelectedWalletAddress("");
+          setWalletSelectionNotice(
+            "No active verified wallet is currently linked. Reconnect or verify a wallet in Account details."
+          );
+        }
+        return;
+      }
+
+      const stillValid = verifiedSelectableWallets.some((w) => w.address === selectedWalletAddress);
+      if (!stillValid) {
+        setSelectedWalletAddress(defaultSelectedWalletAddress);
+        if (selectedWalletAddress) {
+          setWalletSelectionNotice(
+            "Your previously selected external wallet was unlinked. Selection reset to your primary wallet."
+          );
+        }
+      }
+    } else if (currentUserAddress && !selectedWalletAddress) {
+      setSelectedWalletAddress(currentUserAddress);
+    }
+  }, [rawWallets, verifiedSelectableWallets, selectedWalletAddress, defaultSelectedWalletAddress, currentUserAddress]);
+
+  const effectiveCreatorAddress = (() => {
+    if (Array.isArray(rawWallets)) {
+      const matched = verifiedSelectableWallets.find((w) => w.address === selectedWalletAddress);
+      return matched ? matched.address : defaultSelectedWalletAddress;
+    }
+    return selectedWalletAddress || currentUserAddress;
+  })();
+
+  const selectedWalletRecord = verifiedSelectableWallets.find(
+    (w) => w.address === effectiveCreatorAddress
+  );
 
   // Auto-expand multiline textarea naturally
   useEffect(() => {
@@ -148,11 +241,10 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
     setClarification(null);
 
     try {
-      const response = await fetch("/api/ai/draft", {
+      const response = await authenticatedFetch("/api/ai/draft", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...getAuthHeaders(),
         },
         body: JSON.stringify({
           prompt: promptToSend,
@@ -245,9 +337,9 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
         ? "GC2YDKW52O7MJ62JGPZGQSKWDN6YUHXU3M32QJQ6DFRBATWL6RIHUOP6"
         : "GAA3NUA7AXVA54TYMPHTHB6UKZ7ZGFJHUIPOFPPU5TDL5KI2BLCBAJNX");
 
-    const payer = isRequestFlow ? otherParty : currentUserAddress;
-    const recipient = isRequestFlow ? currentUserAddress : otherParty;
-    const approver = isRequestFlow ? otherParty : currentUserAddress;
+    const payer = isRequestFlow ? otherParty : effectiveCreatorAddress;
+    const recipient = isRequestFlow ? effectiveCreatorAddress : otherParty;
+    const approver = isRequestFlow ? otherParty : effectiveCreatorAddress;
 
     return {
       amount: normalizedAmount,
@@ -278,11 +370,10 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
   const runCheckerAudit = async (terms: AgreementTerms) => {
     setChecking(true);
     try {
-      const response = await fetch("/api/ai/check", {
+      const response = await authenticatedFetch("/api/ai/check", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...getAuthHeaders(),
         },
         body: JSON.stringify({ terms }),
       });
@@ -301,8 +392,8 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
   const validateStep = (step: number): boolean => {
     setStepValidationError(null);
     if (step === 1) {
-      if (!currentUserAddress || !validateStellarAddress(currentUserAddress)) {
-        setStepValidationError("Please link a Stellar wallet in Account details (or use Dev Sandbox) before creating an agreement.");
+      if (!effectiveCreatorAddress || !validateStellarAddress(effectiveCreatorAddress)) {
+        setStepValidationError("Please link and select an active verified Stellar wallet in Account details before creating an agreement.");
         return false;
       }
       const addr = counterpartyInput.trim();
@@ -310,7 +401,7 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
         setStepValidationError("Please select a contact or enter a valid Stellar account address starting with G.");
         return false;
       }
-      if (addr === currentUserAddress) {
+      if (addr === effectiveCreatorAddress) {
         setStepValidationError("Payer and recipient cannot be the same account address.");
         return false;
       }
@@ -376,11 +467,10 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
         status: "CREATED",
       };
 
-      const res = await fetch("/api/agreements", {
+      const res = await authenticatedFetch("/api/agreements", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...getAuthHeaders(),
         },
         body: JSON.stringify(payload),
       });
@@ -672,6 +762,70 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
                   </p>
                 </div>
 
+                {(verifiedSelectableWallets.length > 0 || walletSelectionNotice) && (
+                  <div className="space-y-2" data-testid="agreement-wallet-selector">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-[var(--tf-muted)]">
+                        {isRequestFlow
+                          ? "Your receiving wallet for this request"
+                          : "Your paying wallet for this agreement"}
+                      </span>
+                      {selectedWalletRecord && (
+                        <span className="text-[11px] font-medium text-[#4A2574] dark:text-[#F5D03A]">
+                          {formatStellarProviderName(selectedWalletRecord.provider)}
+                        </span>
+                      )}
+                    </div>
+
+                    {walletSelectionNotice && (
+                      <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-[11px] text-amber-900 dark:text-amber-200 flex items-center gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{walletSelectionNotice}</span>
+                      </div>
+                    )}
+
+                    {verifiedSelectableWallets.length > 0 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Your Stellar wallet for this agreement">
+                        {verifiedSelectableWallets.map((w) => {
+                          const isSelected = w.address === effectiveCreatorAddress;
+                          const isEmbedded = w.custody === "privy_embedded";
+                          return (
+                            <button
+                              key={w.id || w.address}
+                              type="button"
+                              role="radio"
+                              aria-checked={isSelected}
+                              data-testid={`agreement-wallet-option-${w.address}`}
+                              onClick={() => {
+                                setSelectedWalletAddress(w.address);
+                                setWalletSelectionNotice(null);
+                                setStepValidationError(null);
+                              }}
+                              className={`p-3 rounded-xl border text-left transition-colors cursor-pointer ${
+                                isSelected
+                                  ? "border-[#F5D03A] bg-[#F5D03A]/10 text-slate-950 dark:text-white"
+                                  : "border-[var(--tf-border)] hover:bg-[var(--tf-surface-subtle)] text-slate-700 dark:text-slate-300"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-semibold truncate">
+                                  {formatStellarProviderName(w.provider)}
+                                </span>
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-800 text-[var(--tf-muted)] shrink-0">
+                                  {isEmbedded ? "Primary embedded" : "Verified external"}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-[var(--tf-muted)] font-mono mt-1 truncate" title={w.address}>
+                                {formatAddress(w.address)}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <span className="text-xs font-medium text-[var(--tf-muted)] block">
                     Saved contacts
@@ -921,20 +1075,20 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
                       <span className="text-[var(--tf-muted)] block mb-0.5">
                         {isRequestFlow ? "Client / Funder" : "Client / Payer (You)"}
                       </span>
-                      <span className="font-mono text-slate-800 dark:text-slate-200 break-all">
+                      <span className="font-mono text-slate-800 dark:text-slate-200 break-all" title={isRequestFlow ? counterpartyInput : effectiveCreatorAddress}>
                         {isRequestFlow
-                          ? counterpartyName || `${counterpartyInput.slice(0, 14)}...`
-                          : `${currentUserAddress.slice(0, 14)}...`}
+                          ? counterpartyName || formatAddress(counterpartyInput)
+                          : `${formatAddress(effectiveCreatorAddress)}${selectedWalletRecord ? ` · ${formatStellarProviderName(selectedWalletRecord.provider)}` : ""}`}
                       </span>
                     </div>
                     <div>
                       <span className="text-[var(--tf-muted)] block mb-0.5">
                         {isRequestFlow ? "Recipient (You)" : "Freelancer / Recipient"}
                       </span>
-                      <span className="font-mono text-slate-800 dark:text-slate-200 break-all">
+                      <span className="font-mono text-slate-800 dark:text-slate-200 break-all" title={isRequestFlow ? effectiveCreatorAddress : counterpartyInput}>
                         {isRequestFlow
-                          ? `${currentUserAddress.slice(0, 14)}...`
-                          : counterpartyName || `${counterpartyInput.slice(0, 14)}...`}
+                          ? `${formatAddress(effectiveCreatorAddress)}${selectedWalletRecord ? ` · ${formatStellarProviderName(selectedWalletRecord.provider)}` : ""}`
+                          : counterpartyName || formatAddress(counterpartyInput)}
                       </span>
                     </div>
                   </div>
@@ -1047,6 +1201,13 @@ export const ConversationalWorkspace: React.FC<ConversationalWorkspaceProps> = (
                     <span className="text-[var(--tf-muted)]">Amount</span>
                     <span className="font-semibold text-slate-950 dark:text-white tabular-nums">
                       {amountInput} {assetChoice}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-[var(--tf-muted)]">Your wallet</span>
+                    <span className="font-mono text-slate-900 dark:text-slate-100" title={effectiveCreatorAddress}>
+                      {formatAddress(effectiveCreatorAddress)}
+                      {selectedWalletRecord ? ` (${formatStellarProviderName(selectedWalletRecord.provider)})` : ""}
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">

@@ -14,6 +14,7 @@
     "test": "tsx --test tests/**/*.test.ts"
   },
   "dependencies": {
+    "@creit.tech/stellar-wallets-kit": "^2.8.0",
     "@google/genai": "^2.4.0",
     "@pollar/core": "^0.12.0",
     "@pollar/privy-adapter": "^0.11.1",
@@ -23,6 +24,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "happy-dom": "^21.0.4",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",

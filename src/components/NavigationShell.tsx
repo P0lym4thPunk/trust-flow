@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { WalletAccount, SIMULATED_PROFILES } from "../lib/stellar/wallet";
 import { formatAddress } from "../lib/stellar/config";
+import { formatStellarProviderName } from "../lib/stellar/walletsKit";
 import { useAuth } from "../lib/auth/AuthContext";
 
 interface NavigationShellProps {
@@ -57,15 +58,27 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const [refreshingBalance, setRefreshingBalance] = useState(false);
   const [switchingPersona, setSwitchingPersona] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [connectingFreighter, setConnectingFreighter] = useState(false);
+  const [unlinkingWalletId, setUnlinkingWalletId] = useState<string | null>(null);
+  const [walletActionError, setWalletActionError] = useState<string | null>(null);
   const menuContainerRef = useRef<HTMLDivElement>(null);
 
   const {
     user,
+    privyUser,
     capabilities,
     isAuthenticated,
+    isPrivyConfigured,
     openAuthModal,
     logout,
     refreshBalance,
+    unlinkExternalWallet,
+    linkPrivyEmail,
+    linkPrivyGoogle,
+    cancelPrivyLink,
+    privyLinkingBusy,
+    privyLinkingError,
+    clearPrivyLinkError,
     isDemoSandbox,
     selectedDemoPersona,
   } = useAuth();
@@ -126,8 +139,56 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
   const handleOpenAccount = () => {
     setMenuOpen(false);
     setSwitchError(null);
+    setWalletActionError(null);
+    clearPrivyLinkError();
     setAccountModalOpen(true);
   };
+
+  const handleConnectFreighterClick = async () => {
+    setConnectingFreighter(true);
+    setWalletActionError(null);
+    try {
+      await onConnectRealWallet();
+    } catch (err: any) {
+      setWalletActionError(err.message || "Failed to connect Freighter wallet.");
+    } finally {
+      setConnectingFreighter(false);
+    }
+  };
+
+  const handleUnlinkExternalWallet = async (walletId: string) => {
+    setUnlinkingWalletId(walletId);
+    setWalletActionError(null);
+    try {
+      await unlinkExternalWallet(walletId);
+    } catch (err: any) {
+      setWalletActionError(err.message || "Unable to unlink external wallet.");
+    } finally {
+      setUnlinkingWalletId(null);
+    }
+  };
+
+  const activeWallets = (user?.wallets || []).filter((w) => w.status === "active");
+  const unlinkedWallets = (user?.wallets || []).filter((w) => w.status === "unlinked");
+  const linkedAccounts = Array.isArray(privyUser?.linkedAccounts)
+    ? privyUser.linkedAccounts
+    : [];
+  const emailAccount = linkedAccounts.find((acc: any) => acc?.type === "email") as
+    | { type?: string; address?: string; email?: string }
+    | undefined;
+  const googleAccount = linkedAccounts.find((acc: any) => acc?.type === "google_oauth") as
+    | { type?: string; email?: string; name?: string }
+    | undefined;
+  const hasLinkedEmail = Boolean(emailAccount);
+  const hasLinkedGoogle = Boolean(googleAccount);
+  const emailFactorAddress =
+    typeof emailAccount?.address === "string"
+      ? emailAccount.address
+      : typeof emailAccount?.email === "string"
+      ? emailAccount.email
+      : null;
+  const googleProfileEmail =
+    typeof googleAccount?.email === "string" ? googleAccount.email : null;
 
   const handleSwitchPersona = async (persona: WalletAccount) => {
     setSwitchingPersona(true);
@@ -392,16 +453,20 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 </p>
               </div>
 
-              {(walletNotice || switchError) && (
+              {(walletNotice || switchError || walletActionError || privyLinkingError) && (
                 <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-900 dark:text-amber-200 flex items-start justify-between gap-2">
                   <span className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>{switchError || walletNotice}</span>
+                    <span>{switchError || walletActionError || privyLinkingError || walletNotice}</span>
                   </span>
-                  {onClearWalletNotice && !switchError && (
+                  {(onClearWalletNotice || walletActionError || privyLinkingError) && !switchError && (
                     <button
                       type="button"
-                      onClick={onClearWalletNotice}
+                      onClick={() => {
+                        setWalletActionError(null);
+                        clearPrivyLinkError();
+                        onClearWalletNotice?.();
+                      }}
                       className="text-xs opacity-70 hover:opacity-100 cursor-pointer"
                       aria-label="Dismiss notice"
                     >
@@ -411,10 +476,14 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                 </div>
               )}
 
-              {/* Stellar Account Address + Copy */}
+              {/* Primary Stellar Account Address + Copy */}
               <div className="p-3.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] space-y-1.5">
                 <div className="flex items-center justify-between text-xs text-[var(--tf-muted)]">
-                  <span>Linked wallet address</span>
+                  <span>
+                    {user?.walletCustody === "privy_embedded"
+                      ? "Primary embedded wallet (Privy)"
+                      : "Linked wallet address"}
+                  </span>
                   {currentAccount.address && (
                     <button
                       type="button"
@@ -441,16 +510,179 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                   </div>
                 ) : (
                   <div className="text-xs text-[var(--tf-muted)]">
-                    No Stellar wallet linked yet. Connect Freighter below to bind a wallet address.
+                    No Stellar wallet linked yet. Connect an external Stellar wallet below to bind a wallet address.
                   </div>
                 )}
               </div>
+
+              {/* Connected Wallets List (additive multi-wallet view) */}
+              {!isDemoSandbox && (activeWallets.length > 0 || unlinkedWallets.length > 0) && (
+                <div className="space-y-2.5">
+                  {activeWallets.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs text-[var(--tf-muted)]">
+                        <span className="font-medium">Verified wallets ({activeWallets.length})</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {activeWallets.map((w) => {
+                          const isEmbedded = w.custody === "privy_embedded";
+                          return (
+                            <div
+                              key={w.id}
+                              data-testid={`profile-wallet-${w.address}`}
+                              className="px-3 py-2.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-medium text-slate-900 dark:text-white">
+                                    {isEmbedded
+                                      ? "Primary embedded wallet (Privy)"
+                                      : `${formatStellarProviderName(w.provider)} · Verified external`}
+                                  </span>
+                                  {w.isPrimary && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-[#4A2574]/10 dark:bg-[#F5D03A]/15 text-[#4A2574] dark:text-[#F5D03A]">
+                                      Primary
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="font-mono text-[11px] text-[var(--tf-muted)] truncate mt-0.5" title={w.address}>
+                                  {formatAddress(w.address)}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyAddress(w.address)}
+                                  className="p-1.5 rounded-lg text-[var(--tf-muted)] hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                  title="Copy wallet address"
+                                  aria-label={`Copy ${w.address}`}
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </button>
+                                {!isEmbedded && w.custody !== "dev_sandbox" && (
+                                  <button
+                                    type="button"
+                                    disabled={unlinkingWalletId === w.id}
+                                    onClick={() => handleUnlinkExternalWallet(w.id)}
+                                    className="px-2 py-1 text-[11px] font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                  >
+                                    {unlinkingWalletId === w.id ? "Unlinking..." : "Unlink"}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {unlinkedWallets.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="text-[11px] text-[var(--tf-muted)]">
+                        Unlinked wallets ({unlinkedWallets.length})
+                      </div>
+                      <div className="space-y-1">
+                        {unlinkedWallets.map((w) => (
+                          <div
+                            key={w.id}
+                            className="px-3 py-2 rounded-xl bg-[var(--tf-surface-subtle)]/60 border border-[var(--tf-border)]/70 flex items-center justify-between gap-2 text-[11px] opacity-80"
+                          >
+                            <div className="min-w-0">
+                              <span className="font-medium text-slate-700 dark:text-slate-300">
+                                {formatStellarProviderName(w.provider)}
+                              </span>
+                              <span className="ml-2 font-mono text-[var(--tf-muted)]" title={w.address}>
+                                {formatAddress(w.address)}
+                              </span>
+                            </div>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-[10px] text-[var(--tf-muted)] shrink-0">
+                              Unlinked
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Privy Linked Sign-in Methods */}
+              {!isDemoSandbox && isAuthenticated && user?.provider === "privy" && isPrivyConfigured && (
+                <div className="space-y-2 pt-3 border-t border-[var(--tf-border)]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-[var(--tf-muted)] block">
+                      Sign-in methods
+                    </span>
+                    {privyLinkingBusy && (
+                      <button
+                        type="button"
+                        onClick={cancelPrivyLink}
+                        className="text-[11px] text-amber-700 dark:text-amber-300 hover:underline cursor-pointer"
+                      >
+                        Cancel linking
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div
+                      data-testid="auth-method-email"
+                      className="p-2.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium text-slate-900 dark:text-white">Email OTP</div>
+                        <div className="text-[11px] text-[var(--tf-muted)] truncate">
+                          {hasLinkedEmail ? emailFactorAddress || "Linked" : "Not linked"}
+                        </div>
+                      </div>
+                      {!hasLinkedEmail && (
+                        <button
+                          type="button"
+                          disabled={privyLinkingBusy}
+                          onClick={() => void linkPrivyEmail()}
+                          className="text-[11px] font-semibold text-[#4A2574] dark:text-[#F5D03A] hover:underline shrink-0 cursor-pointer disabled:opacity-50"
+                        >
+                          Link
+                        </button>
+                      )}
+                    </div>
+
+                    <div
+                      data-testid="auth-method-google"
+                      className="p-2.5 rounded-xl bg-[var(--tf-surface-subtle)] border border-[var(--tf-border)] flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium text-slate-900 dark:text-white">Google</div>
+                        <div className="text-[11px] text-[var(--tf-muted)] truncate" title={googleProfileEmail || undefined}>
+                          {hasLinkedGoogle
+                            ? googleProfileEmail
+                              ? `Linked · ${googleProfileEmail}`
+                              : "Linked"
+                            : "Not linked"}
+                        </div>
+                      </div>
+                      {!hasLinkedGoogle && (
+                        <button
+                          type="button"
+                          disabled={privyLinkingBusy}
+                          onClick={() => void linkPrivyGoogle()}
+                          className="text-[11px] font-semibold text-[#4A2574] dark:text-[#F5D03A] hover:underline shrink-0 cursor-pointer disabled:opacity-50"
+                        >
+                          Link
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Balances */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-[var(--tf-muted)]">
-                    Available balances
+                    {!isDemoSandbox && currentAccount.address
+                      ? `Primary wallet balances (${formatAddress(currentAccount.address)})`
+                      : "Available balances"}
                   </span>
                   {isAuthenticated && currentAccount.address && (
                     <button
@@ -549,14 +781,15 @@ export const NavigationShell: React.FC<NavigationShellProps> = ({
                     </button>
                   )}
 
-                  {!isDemoSandbox && (
+                  {!isDemoSandbox && isAuthenticated && (
                     <button
                       type="button"
-                      onClick={onConnectRealWallet}
-                      className="text-xs font-medium text-[var(--tf-muted)] hover:text-slate-900 dark:hover:text-white inline-flex items-center gap-1 cursor-pointer"
+                      disabled={connectingFreighter}
+                      onClick={handleConnectFreighterClick}
+                      className="text-xs font-medium text-[var(--tf-muted)] hover:text-slate-900 dark:hover:text-white inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
                     >
                       <Wallet className="w-3.5 h-3.5" />
-                      <span>Connect Freighter</span>
+                      <span>{connectingFreighter ? "Opening wallet picker..." : "Connect Stellar Wallet"}</span>
                     </button>
                   )}
                 </div>

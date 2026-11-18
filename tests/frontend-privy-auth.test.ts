@@ -97,15 +97,18 @@ async function startStep2TestServer(options: {
   googlePublicJwk?: Record<string, unknown> | null;
   otpDelivery?: OtpDeliveryProvider;
   allowDevSandbox?: boolean;
+  onCreatePrivyWallet?: (privySub: string) => string | undefined;
 }) {
   const privyAppId = options.privyAppId ?? "cm_app_trustflow_test";
   const privyAppSecret = options.privyAppSecret ?? "privy-secret-server-only";
   const privyUsers = options.privyUsers ?? new Map<string, Record<string, unknown>>();
 
   let privyApiLookupCount = 0;
+  let privyWalletCreateCount = 0;
 
-  const backendFetch: typeof fetch = async (input) => {
+  const backendFetch: typeof fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = (init?.method || (typeof input !== "string" && !(input instanceof URL) ? input.method : "GET") || "GET").toUpperCase();
 
     if (url.startsWith("https://www.googleapis.com/oauth2/v3/certs") && options.googlePublicJwk) {
       return new Response(JSON.stringify({ keys: [options.googlePublicJwk] }), {
@@ -128,6 +131,69 @@ async function startStep2TestServer(options: {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    if (url.startsWith("https://api.privy.io/v1/wallets") && method === "GET") {
+      const parsedUrl = new URL(url);
+      const userId = parsedUrl.searchParams.get("user_id") || "";
+      const userRecord = privyUsers.get(userId);
+      const linked = Array.isArray((userRecord as any)?.linked_accounts)
+        ? ((userRecord as any).linked_accounts as Array<Record<string, unknown>>)
+        : [];
+      const wallets = linked
+        .filter(
+          (acc) =>
+            acc.type === "wallet" &&
+            acc.chain_type === "stellar" &&
+            acc.wallet_client_type === "privy"
+        )
+        .map((acc, idx) => ({
+          id: typeof acc.id === "string" ? acc.id : `pw-existing-${idx}`,
+          address: acc.address,
+          chain_type: "stellar",
+          owner_id: userId,
+          created_at: 1760000000,
+        }));
+      return new Response(JSON.stringify({ data: wallets, next_cursor: null }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://api.privy.io/v1/wallets" && method === "POST") {
+      const body =
+        typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, any>) : {};
+      const userId = typeof body?.owner?.user_id === "string" ? body.owner.user_id : "";
+      const record = privyUsers.get(userId);
+      if (!record) {
+        return new Response(JSON.stringify({ error: "User not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      privyWalletCreateCount += 1;
+      const address = options.onCreatePrivyWallet?.(userId) || Keypair.random().publicKey();
+      const walletId = `pw-created-${privyWalletCreateCount}`;
+      const existingLinked = Array.isArray((record as any).linked_accounts)
+        ? ((record as any).linked_accounts as Array<Record<string, unknown>>)
+        : [];
+      (record as any).linked_accounts = [
+        ...existingLinked,
+        makePrivyApiWallet(address, { id: walletId }),
+      ];
+
+      return new Response(
+        JSON.stringify({
+          id: walletId,
+          address,
+          chain_type: "stellar",
+          owner_id: userId,
+          external_id: body.external_id ?? null,
+          created_at: Math.floor(Date.now() / 1000),
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     return new Response("Not Found", { status: 404 });
@@ -158,6 +224,7 @@ async function startStep2TestServer(options: {
     privyAppId,
     privyUsers,
     getPrivyApiLookupCount: () => privyApiLookupCount,
+    getPrivyWalletCreateCount: () => privyWalletCreateCount,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
@@ -287,7 +354,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     assert.strictEqual(invalidLookup.status, "invalid");
   });
 
-  it("Test A: New Email OTP user via Privy provisions embedded wallet once and enters authenticated workspace", async () => {
+  it("Test A: New Email OTP user via Privy provisions embedded wallet server-side once and enters authenticated workspace", async () => {
     const newWalletAddr = Keypair.random().publicKey();
     const privySub = "did:privy:new-email-user";
 
@@ -307,6 +374,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       tempDir,
       privyUsers,
       privyVerificationKey: ecPublicKeyPem,
+      onCreatePrivyWallet: () => newWalletAddr,
     });
     activeClosers.push(srv.close);
 
@@ -330,7 +398,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
 
     let sentEmail = "";
     let verifiedCode = "";
-    let createWalletCalls = 0;
+    let refreshUserCalls = 0;
 
     let currentPrivyUser: PrivyUserLike | null = null;
     const token = signEs256Jwt(
@@ -360,26 +428,9 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
         },
       },
       getAccessToken: async () => token,
-      refreshUser: async () => currentPrivyUser,
-      createWallet: async ({ chainType }) => {
-        assert.strictEqual(chainType, "stellar");
-        createWalletCalls += 1;
-        // Backend Privy REST record also reflects newly provisioned embedded wallet
-        privyUsers.set(privySub, {
-          id: privySub,
-          linked_accounts: [
-            { type: "email", address: "new.alice@example.com", verified_at: 1760000000 },
-            makePrivyApiWallet(newWalletAddr),
-          ],
-        });
-        currentPrivyUser = {
-          id: privySub,
-          linkedAccounts: [makeClientPrivyWallet(newWalletAddr)],
-        };
-        return {
-          user: currentPrivyUser,
-          wallet: makeClientPrivyWallet(newWalletAddr),
-        };
+      refreshUser: async () => {
+        refreshUserCalls += 1;
+        return currentPrivyUser;
       },
       logout: async () => {},
     });
@@ -392,15 +443,12 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
 
     await controller.verifyOtpCode("new.alice@example.com", "654321");
     assert.strictEqual(verifiedCode, "654321");
-    assert.strictEqual(createWalletCalls, 1, "New user should trigger createWallet exactly once");
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 1, "New user should trigger server wallet provisioning once");
     assert.strictEqual(observed.privySyncBodies.length, 1);
+    assert.ok(refreshUserCalls >= 2, "Best-effort refreshUser runs after server provisioning");
 
     // Ensure frontend does NOT send spoofable email/displayName fields
-    assert.deepStrictEqual(Object.keys(observed.privySyncBodies[0]).sort(), [
-      "accessToken",
-      "stellarAddress",
-    ]);
-    assert.strictEqual(observed.privySyncBodies[0].stellarAddress, newWalletAddr);
+    assert.deepStrictEqual(Object.keys(observed.privySyncBodies[0]).sort(), ["accessToken"]);
 
     const state = controller.getState();
     assert.strictEqual(state.stage, "authenticated");
@@ -411,7 +459,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     assert.ok(storage.getItem("trustflow_auth_token")?.startsWith("tf-sess-"));
 
     assert.ok(stages.includes("wallet_loading"));
-    assert.ok(stages.includes("wallet_ready"));
     assert.ok(stages.includes("backend_syncing"));
     assert.strictEqual(stages[stages.length - 1], "authenticated");
 
@@ -419,10 +466,13 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     controller.updatePrivySnapshot({
       ready: true,
       authenticated: true,
-      user: currentPrivyUser,
+      user: {
+        id: privySub,
+        linkedAccounts: [makeClientPrivyWallet(newWalletAddr)],
+      },
     });
     await new Promise((r) => setTimeout(r, 30));
-    assert.strictEqual(createWalletCalls, 1);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 1);
     assert.strictEqual(observed.privySyncBodies.length, 1);
   });
 
@@ -490,17 +540,13 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       },
       getAccessToken: async () => token,
       refreshUser: async () => privyUserObj,
-      createWallet: async () => {
-        createWalletCalls += 1;
-        throw new Error("createWallet must not be called for returning users");
-      },
     });
 
     await controller.initSession();
     controller.updatePrivySnapshot({ ready: true, authenticated: false, user: null });
     await controller.verifyOtpCode("returning@example.com", "112233");
 
-    assert.strictEqual(createWalletCalls, 0);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0);
     assert.strictEqual(observed.privySyncBodies.length, 1);
     assert.strictEqual(controller.getState().stage, "authenticated");
     assert.strictEqual(controller.getState().user?.stellarAddress, existingAddr);
@@ -517,10 +563,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     });
     reloaded.setRuntimeActions({
       getAccessToken: async () => token,
-      createWallet: async () => {
-        createWalletCalls += 1;
-        return {};
-      },
     });
     await reloaded.initSession();
     reloaded.updatePrivySnapshot({ ready: true, authenticated: true, user: privyUserObj });
@@ -528,7 +570,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
 
     assert.strictEqual(reloaded.getState().stage, "authenticated");
     assert.strictEqual(reloaded.getState().user?.stellarAddress, existingAddr);
-    assert.strictEqual(createWalletCalls, 0);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0);
     assert.strictEqual(observedReload.privySyncBodies.length, 0, "Reload with valid matching session restores via /api/auth/me");
   });
 
@@ -569,7 +611,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     );
 
     let loginWithOAuthCalls = 0;
-    let createWalletCalls = 0;
 
     // Fresh controller after redirect reload (no TrustFlow JWT yet)
     const controller = new TrustFlowAuthController({
@@ -598,10 +639,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
         id: privySub,
         linkedAccounts: [makeClientPrivyWallet(googleAddr)],
       }),
-      createWallet: async () => {
-        createWalletCalls += 1;
-        return {};
-      },
     });
 
     await controller.initSession();
@@ -621,7 +658,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     await new Promise((r) => setTimeout(r, 80));
 
     assert.strictEqual(loginWithOAuthCalls, 0, "No second manual Google login may be required");
-    assert.strictEqual(createWalletCalls, 0);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0);
     assert.strictEqual(observed.privySyncBodies.length, 1);
 
     const state = controller.getState();
@@ -663,7 +700,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       ecPrivateKeyPem
     );
 
-    let createWalletCalls = 0;
     let refreshUserCalls = 0;
 
     const controller = new TrustFlowAuthController({
@@ -681,10 +717,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
         refreshUserCalls += 1;
         // Return empty first so reactive delayed linkedAccounts update is exercised
         return { id: privySub, linkedAccounts: [] };
-      },
-      createWallet: async () => {
-        createWalletCalls += 1;
-        return {};
       },
     });
 
@@ -712,7 +744,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     await new Promise((r) => setTimeout(r, 220));
 
     assert.ok(refreshUserCalls >= 1);
-    assert.strictEqual(createWalletCalls, 0, "Delayed hydration must prevent duplicate createWallet");
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0, "Delayed hydration must prevent duplicate provisioning");
     assert.strictEqual(observed.privySyncBodies.length, 1);
     assert.strictEqual(controller.getState().stage, "authenticated");
     assert.strictEqual(controller.getState().user?.stellarAddress, existingAddr);
@@ -816,7 +848,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     activeClosers.push(srv.close);
 
     let forceOutage = true;
-    let createWalletCalls = 0;
     let privyLogoutCalls = 0;
 
     const observed = createObservedFetch({
@@ -855,10 +886,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
         id: privySub,
         linkedAccounts: [makeClientPrivyWallet(existingAddr)],
       }),
-      createWallet: async () => {
-        createWalletCalls += 1;
-        return {};
-      },
       logout: async () => {
         privyLogoutCalls += 1;
       },
@@ -894,17 +921,34 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     assert.strictEqual(recoveredState.isAuthenticated, true);
     assert.strictEqual(recoveredState.syncError, null);
     assert.strictEqual(recoveredState.user?.stellarAddress, existingAddr);
-    assert.strictEqual(createWalletCalls, 0, "Retry must not attempt wallet creation");
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0, "Retry must not attempt wallet creation");
     assert.strictEqual(observed.privySyncBodies.length, 2);
   });
 
-  it("Test G: Missing embedded wallet or external-only wallet enters sync_failed and never calls privy-sync or uses Freighter", async () => {
+  it("Test G: External-only wallet never masquerades as embedded wallet and obeys provisioning guard", async () => {
     const freighterAddr = Keypair.random().publicKey();
     const privySub = "did:privy:external-only-user";
 
     const srv = await startStep2TestServer({
       tempDir,
-      privyUsers: new Map(),
+      privyUsers: new Map([
+        [
+          privySub,
+          {
+            id: privySub,
+            linked_accounts: [
+              {
+                type: "wallet",
+                chain_type: "stellar",
+                address: freighterAddr,
+                wallet_client_type: "freighter",
+                connector_type: "injected",
+                verified_at: 1760000000,
+              },
+            ],
+          },
+        ],
+      ]),
       privyVerificationKey: ecPublicKeyPem,
     });
     activeClosers.push(srv.close);
@@ -918,6 +962,8 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
 
     const controller = new TrustFlowAuthController({
       isPrivyConfigured: true,
+      disableAutoWalletProvision: true,
+      isProduction: false,
       fetchFn: observed.fetchFn,
       storage,
       apiBaseUrl: srv.baseUrl,
@@ -925,7 +971,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       hydrationPollMs: 15,
     });
 
-    let createWalletCalls = 0;
     const externalOnlyUser: PrivyUserLike = {
       id: privySub,
       linkedAccounts: [
@@ -942,10 +987,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     controller.setRuntimeActions({
       getAccessToken: async () => token,
       refreshUser: async () => externalOnlyUser,
-      createWallet: async () => {
-        createWalletCalls += 1;
-        return { user: externalOnlyUser, wallet: null };
-      },
     });
 
     await controller.initSession();
@@ -958,12 +999,37 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     await new Promise((r) => setTimeout(r, 150));
 
     const state = controller.getState();
-    assert.strictEqual(createWalletCalls, 1, "Attempted at most once then failed cleanly");
-    assert.strictEqual(observed.privySyncBodies.length, 0, "Must never call privy-sync with an external wallet");
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0);
+    assert.strictEqual(observed.privySyncBodies.length, 0, "Must never call privy-sync with only an external wallet when auto-provision is disabled");
     assert.strictEqual(state.stage, "sync_failed");
     assert.strictEqual(state.isAuthenticated, false);
     assert.strictEqual(state.syncError?.code, "NO_EMBEDDED_STELLAR_WALLET");
     assert.strictEqual(storage.getItem("trustflow_auth_token"), null);
+
+    // Even when auto-provisioning is enabled on server, Freighter address is NEVER accepted as the embedded wallet
+    const autoProvisionController = new TrustFlowAuthController({
+      isPrivyConfigured: true,
+      fetchFn: observed.fetchFn,
+      storage: createMemoryAuthStorage(),
+      apiBaseUrl: srv.baseUrl,
+      hydrationWaitMs: 50,
+      hydrationPollMs: 15,
+    });
+    autoProvisionController.setRuntimeActions({
+      getAccessToken: async () => token,
+      refreshUser: async () => externalOnlyUser,
+    });
+    await autoProvisionController.initSession();
+    autoProvisionController.updatePrivySnapshot({
+      ready: true,
+      authenticated: true,
+      user: externalOnlyUser,
+    });
+    await new Promise((r) => setTimeout(r, 120));
+
+    assert.strictEqual(autoProvisionController.getState().stage, "authenticated");
+    assert.notStrictEqual(autoProvisionController.getState().user?.stellarAddress, freighterAddr);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 1);
   });
 
   it("Test H: Switching from User A to User B clears stale User A session, token, and wallet before syncing User B", async () => {
@@ -1244,7 +1310,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     });
     activeClosers.push(srv.close);
 
-    let createWalletCalls = 0;
     const controller = new TrustFlowAuthController({
       isPrivyConfigured: true,
       defaultDevSandboxEnabled: true,
@@ -1254,12 +1319,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       apiBaseUrl: srv.baseUrl,
     });
 
-    controller.setRuntimeActions({
-      createWallet: async () => {
-        createWalletCalls += 1;
-        return { wallet: null };
-      },
-    });
+    controller.setRuntimeActions({});
 
     await controller.initSession();
     controller.updatePrivySnapshot({ ready: true, authenticated: false, user: null });
@@ -1293,14 +1353,22 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       assert.strictEqual(effective?.address, simulatedProfiles[idx].address);
     }
 
-    assert.strictEqual(createWalletCalls, 0);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0);
   });
 
   it("Test L (Phase 2.2A): Privy Email OTP completes with test guard active, preserves Privy identity, and skips wallet creation", async () => {
     const privySub = "did:privy:phase22a-test-user";
     const srv = await startStep2TestServer({
       tempDir,
-      privyUsers: new Map(),
+      privyUsers: new Map([
+        [
+          privySub,
+          {
+            id: privySub,
+            linked_accounts: [{ type: "email", address: "phase22a.test@example.com", verified_at: 1760000000 }],
+          },
+        ],
+      ]),
       privyVerificationKey: ecPublicKeyPem,
     });
     activeClosers.push(srv.close);
@@ -1322,10 +1390,9 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       hydrationPollMs: 15,
     });
 
-    let createWalletCalls = 0;
     let refreshUserCalls = 0;
     let emailOtpVerified = false;
-    let privyUserObj: PrivyUserLike = {
+    const privyUserObj: PrivyUserLike = {
       id: privySub,
       linkedAccounts: [{ type: "email", address: "phase22a.test@example.com" }],
     };
@@ -1349,10 +1416,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
         refreshUserCalls += 1;
         return privyUserObj;
       },
-      createWallet: async () => {
-        createWalletCalls += 1;
-        return { wallet: makeClientPrivyWallet(Keypair.random().publicKey()) };
-      },
     });
 
     await controller.initSession();
@@ -1366,7 +1429,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
 
     assert.strictEqual(emailOtpVerified, true);
     assert.strictEqual(controller.isAutoWalletProvisionDisabled(), true);
-    assert.strictEqual(createWalletCalls, 0);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0);
     assert.ok(refreshUserCalls >= 1);
     assert.strictEqual(observed.privySyncBodies.length, 0);
 
@@ -1403,7 +1466,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       hydrationPollMs: 15,
     });
 
-    let createWalletCalls = 0;
     const privyUserObj: PrivyUserLike = {
       id: privySub,
       linkedAccounts: [{ type: "email", address: "nobypass@example.com" }],
@@ -1412,10 +1474,6 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     controller.setRuntimeActions({
       getAccessToken: async () => token,
       refreshUser: async () => privyUserObj,
-      createWallet: async () => {
-        createWalletCalls += 1;
-        return { wallet: makeClientPrivyWallet(Keypair.random().publicKey()) };
-      },
     });
 
     await controller.initSession();
@@ -1431,7 +1489,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     }
     await new Promise((r) => setTimeout(r, 90));
 
-    assert.strictEqual(createWalletCalls, 0);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0);
     assert.strictEqual(controller.getState().activePrivySub, privySub);
 
     // Explicit syncPrivySession({ allowWalletProvision: true }) and retryPrivySync() must still be blocked
@@ -1443,10 +1501,10 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       () => controller.retryPrivySync(),
       /Privy Wallet Test Mode is active/i
     );
-    assert.strictEqual(createWalletCalls, 0);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 0);
   });
 
-  it("Test N (Phase 2.2A): Production safety prevents test guard activation and preserves normal wallet provisioning", async () => {
+  it("Test N (Phase 2.2A): Production safety prevents test guard activation and preserves normal server wallet provisioning", async () => {
     const newWalletAddr = Keypair.random().publicKey();
     const privySub = "did:privy:prod-safety-user";
 
@@ -1466,6 +1524,7 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       tempDir,
       privyUsers,
       privyVerificationKey: ecPublicKeyPem,
+      onCreatePrivyWallet: () => newWalletAddr,
     });
     activeClosers.push(srv.close);
 
@@ -1488,28 +1547,9 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
     assert.strictEqual(controller.isAutoWalletProvisionDisabled(), false);
     assert.strictEqual(controller.getState().autoWalletProvisionDisabled, false);
 
-    let createWalletCalls = 0;
     controller.setRuntimeActions({
       getAccessToken: async () => token,
       refreshUser: async () => ({ id: privySub, linkedAccounts: [] }),
-      createWallet: async ({ chainType }) => {
-        assert.strictEqual(chainType, "stellar");
-        createWalletCalls += 1;
-        privyUsers.set(privySub, {
-          id: privySub,
-          linked_accounts: [
-            { type: "email", address: "prod.safe@example.com", verified_at: 1760000000 },
-            makePrivyApiWallet(newWalletAddr),
-          ],
-        });
-        return {
-          user: {
-            id: privySub,
-            linkedAccounts: [makeClientPrivyWallet(newWalletAddr)],
-          },
-          wallet: makeClientPrivyWallet(newWalletAddr),
-        };
-      },
     });
 
     await controller.initSession();
@@ -1518,9 +1558,9 @@ describe("TrustFlow Step 2: Frontend Auth Lifecycle & Embedded Stellar Wallet Re
       authenticated: true,
       user: { id: privySub, linkedAccounts: [] },
     });
-    await new Promise((r) => setTimeout(r, 90));
+    await new Promise((r) => setTimeout(r, 120));
 
-    assert.strictEqual(createWalletCalls, 1);
+    assert.strictEqual(srv.getPrivyWalletCreateCount(), 1);
     assert.strictEqual(controller.getState().stage, "authenticated");
     assert.strictEqual(controller.getState().user?.stellarAddress, newWalletAddr);
   });

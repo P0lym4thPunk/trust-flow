@@ -165,6 +165,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
 
   const emailEnabled = isPrivyConfigured || capabilities.emailOtpConfigured;
   const googleEnabled = isPrivyConfigured || capabilities.googleConfigured;
+  const isProdMissingPrivy =
+    !isPrivyConfigured && (import.meta.env.PROD || Boolean(capabilities.legacyAuthDisabled));
 
   return (
     <AnimatePresence>
@@ -273,12 +275,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onContinueDemo }) => {
                   </h3>
                   <p className="text-xs text-[var(--tf-muted)] max-w-xs mx-auto">
                     {authStage === "privy_authenticated" || authStage === "wallet_loading"
-                      ? "Retrieving your embedded Stellar wallet from Privy."
+                      ? "Preparing your embedded Stellar wallet and session."
                       : authStage === "wallet_ready" || authStage === "backend_syncing"
                       ? "Synchronizing your verified wallet and account with TrustFlow."
                       : "Confirming credentials with the server."}
                   </p>
                 </div>
+              </div>
+            ) : isProdMissingPrivy ? (
+              <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 space-y-2">
+                <div className="flex items-start gap-2.5 text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>Authentication unavailable</span>
+                </div>
+                <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed pl-6">
+                  Privy sign-in is required in production and is not configured for this environment yet.
+                </p>
               </div>
             ) : (
               <>

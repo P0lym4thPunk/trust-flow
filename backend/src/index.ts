@@ -4,6 +4,7 @@ import { getRuntimeConfig, ServerRuntimeConfig } from "./config/runtime.config.j
 import { errorHandler } from "./middleware/auth.middleware.js";
 import { AgreementRepository, FileAgreementRepository } from "./repositories/agreement.repository.js";
 import { AuthRepository, FileAuthRepository } from "./repositories/auth.repository.js";
+import { KeyedOperationLock } from "./repositories/operationLock.js";
 import { createAgreementRoutes } from "./routes/agreement.routes.js";
 import { createAiRoutes } from "./routes/ai.routes.js";
 import { createAuthRoutes } from "./routes/auth.routes.js";
@@ -47,6 +48,7 @@ export function createApiModule(options: CreateApiModuleOptions = {}) {
   const otpDelivery =
     options.otpDelivery || new WebhookOtpDeliveryProvider(config.auth.emailOtpWebhookUrl, fetchFn);
 
+  const operationLock = new KeyedOperationLock();
   const authService = new AuthService(
     authRepo,
     config.auth,
@@ -54,9 +56,12 @@ export function createApiModule(options: CreateApiModuleOptions = {}) {
     otpDelivery,
     config.horizonUrl,
     fetchFn,
-    privyClient
+    privyClient,
+    config.isProd,
+    agreementRepo,
+    operationLock
   );
-  const agreementService = new AgreementService(agreementRepo);
+  const agreementService = new AgreementService(agreementRepo, authRepo, operationLock);
   const aiService = new AiService(config.ai);
   const stellarRpc = new StellarRpcAdapter();
 
@@ -95,6 +100,7 @@ export * from "./types/backend.types.js";
 export * from "./config/runtime.config.js";
 export * from "./repositories/agreement.repository.js";
 export * from "./repositories/auth.repository.js";
+export * from "./repositories/operationLock.js";
 export * from "./services/agreement.service.js";
 export * from "./services/auth.service.js";
 export * from "./services/ai.service.js";

@@ -1,11 +1,53 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, type Plugin} from 'vite';
+
+function stripDevSigningHarnessInBuild(): Plugin {
+  const virtualPanelId = '\0virtual:trustflow-no-dev-signing-panel';
+  const virtualHelperId = '\0virtual:trustflow-no-dev-signing-helpers';
+
+  return {
+    name: 'trustflow-strip-dev-signing-harness',
+    enforce: 'pre',
+    apply: 'build',
+    transform(code, id) {
+      const normalizedId = id.replace(/\\/g, '/');
+      if (normalizedId.endsWith('/src/App.tsx') && code.includes('DevPrivySigningTestPanel')) {
+        return {
+          code: code.replace(
+            /React\.lazy\(\(\)\s*=>\s*import\(["']\.\/components\/DevPrivySigningTestPanel["']\)\)/g,
+            'null'
+          ),
+          map: null,
+        };
+      }
+      return null;
+    },
+    resolveId(source) {
+      if (source.includes('DevPrivySigningTestPanel')) {
+        return virtualPanelId;
+      }
+      if (source.includes('privySigningTest')) {
+        return virtualHelperId;
+      }
+      return null;
+    },
+    load(id) {
+      if (id === virtualPanelId) {
+        return 'export const DevPrivySigningTestPanel = () => null; export default DevPrivySigningTestPanel;';
+      }
+      if (id === virtualHelperId) {
+        return 'export default {};';
+      }
+      return null;
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [stripDevSigningHarnessInBuild(), react(), tailwindcss()],
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),

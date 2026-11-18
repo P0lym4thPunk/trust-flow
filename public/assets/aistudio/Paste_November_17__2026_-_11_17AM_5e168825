@@ -1,0 +1,661 @@
+# TRUSTFLOW — CONSOLIDATED PHASE 2 REMEDIATION
+## Multi-wallet interoperability, authentication, session reliability, concurrency and deployment safety
+
+You are working on the existing TrustFlow application in the current workspace.
+
+Your task is to complete ONE cohesive, carefully scoped remediation milestone based on the requirements and defects below.
+
+This is an implementation task, not a redesign or a new application build.
+
+Do not begin Phase 3 or implement escrow functionality.
+
+---
+
+# 1. PROJECT AUTHORITY AND WORKING RULES
+
+Before making changes:
+
+1. Inspect the current repository, project structure, relevant source files, package.json, installed dependency versions, test setup, build configuration and existing documentation.
+2. Read the actual current implementation rather than relying exclusively on earlier reports or assumed line numbers.
+3. Inspect the exact installed SDK typings and documentation available in the project before using any wallet or Privy API.
+4. Identify which previously reported changes are already present. Do not reimplement working functionality unnecessarily.
+5. Make minimal, targeted changes. Preserve unrelated working code.
+6. This workspace is not a Git repository. Do not assume Git history or use Git diffs as your source of truth. Inspect files directly and report exact modifications.
+7. Preserve the existing approved TrustFlow visual design, navigation, typography, colors, spacing, responsive behaviour and interaction patterns. Do not perform a general UI redesign.
+8. Do not introduce a database, cloud infrastructure, distributed locking service or new hosting service during this task.
+9. Do not create real wallets, provision additional Privy wallets, execute live wallet creation requests, or broadcast transactions during implementation or automated testing.
+10. Do not alter live environment credentials, Privy dashboard settings or external account configuration.
+11. Do not delete existing user, session, agreement or wallet data.
+12. Do not claim that an integration works unless it has been verified. Distinguish automated tests, mocks, static inspection and real external integration tests.
+
+If an SDK capability or API contract cannot be verified from the installed version, stop that part of the implementation and report the uncertainty. Do not invent API methods, provider behaviour or signature formats.
+
+## Architecture that must remain in place
+
+- Privy remains the authentication provider.
+- TrustFlow's existing `tf-sess-*` session architecture remains in place.
+- Do not migrate all API consumers to direct Privy access-token authentication.
+- Privy identity verification remains server-side.
+- Privy embedded Stellar wallet remains the default primary wallet.
+- External Stellar wallets remain optional linked wallets.
+- JSON file persistence remains in place for this milestone.
+- Existing production safeguards remain in place.
+- Existing legacy authentication routes that intentionally return explicit 410 responses must not be reactivated.
+- Existing escrow/funding/release/refund routes must remain disabled with their existing Phase 2-required behaviour.
+- No transaction submission or escrow implementation is authorized.
+
+The implementation must remain compatible with the existing application architecture.
+
+---
+
+# 2. GENERAL STELLAR WALLET INTEROPERABILITY
+
+## 2.1 Replace the Freighter-centric external wallet experience
+
+TrustFlow must not present external wallet linking as a Freighter-only feature.
+
+The desired user experience is:
+
+1. User opens Profile or the wallet connection area.
+2. User clicks one general-purpose "Connect Stellar Wallet" button.
+3. TrustFlow presents a wallet-selection interface.
+4. User chooses a compatible Stellar wallet.
+5. The selected wallet requests connection approval.
+6. TrustFlow retrieves the selected public Stellar address.
+7. TrustFlow presents an explicit ownership-verification message.
+8. User signs the message inside the selected wallet.
+9. TrustFlow sends the challenge and signature to the backend.
+10. Backend verifies the signature and challenge.
+11. Only after successful verification is the external wallet linked to the authenticated TrustFlow user.
+
+The user must be able to cancel the connection or signing request without creating a partially verified wallet record.
+
+The UI should communicate the selected wallet and address clearly.
+
+Do not make the user choose Freighter by default or assume that Freighter is installed.
+
+## 2.2 Evaluate Stellar Wallets Kit
+
+Investigate whether the installed project stack can safely use the current Stellar Wallets Kit as its multi-wallet abstraction.
+
+Important:
+- The current Stellar Wallets Kit has a v2 API and a significant API refactor.
+- Do not copy old v1 examples into this project.
+- Check the exact package name, installed or available version, import paths, module configuration, methods and TypeScript types.
+- Do not install a package just because an old tutorial recommends it.
+- Check whether the library is compatible with the project's React and Vite versions.
+- Prefer a single maintained wallet abstraction over writing multiple unrelated provider integrations.
+
+If the current project does not have the kit installed, assess whether the current supported release is compatible and whether adopting it is the smallest reliable approach.
+
+Do not add a large wallet framework or a second competing wallet abstraction unnecessarily.
+
+If Stellar Wallets Kit cannot safely satisfy the required operations with the current project, explain why and recommend the smallest verified alternative before making a broader architectural change.
+
+## 2.3 Wallet capability awareness
+
+Do not assume that every wallet supports every operation.
+
+Build or document a capability-aware integration model that distinguishes:
+
+- Wallet discovery/availability.
+- Wallet connection.
+- Public address retrieval.
+- Network identification, where supported.
+- SEP-53 message signing.
+- Transaction signing, when later required.
+
+Inspect the actual capabilities of each wallet connector in the selected installed library version.
+
+Potential wallet options to investigate include:
+- Freighter
+- LOBSTR
+- xBull
+- Albedo
+- Rabet
+- Hana
+- WalletConnect-compatible Stellar wallets
+- Other wallets explicitly supported by the selected maintained integration.
+
+This is an investigation list, not a promise that all these wallets support every TrustFlow operation.
+
+A wallet must not be marked as a verified linked wallet merely because it returned a public address.
+
+If a wallet can connect but cannot complete the required ownership proof, communicate that limitation clearly and do not silently bypass verification.
+
+Where possible, present unavailable or unsupported wallets with an honest explanation rather than a broken connect action.
+
+Create a wallet capability matrix in project documentation showing:
+- Wallet/provider.
+- Connection support.
+- Address retrieval support.
+- SEP-53 message-signing support.
+- Relevant limitations.
+- Whether the capability has been tested or is only documented.
+
+Do not describe a wallet as manually tested when only its documentation or mock implementation was inspected.
+
+## 2.4 Ownership verification
+
+Retain the existing SEP-53-based external wallet ownership-verification architecture.
+
+The verification message must be:
+- Human-readable.
+- Specific to TrustFlow.
+- Bound to the authenticated user.
+- Bound to the wallet address.
+- Bound to the configured application domain.
+- Bound to the intended Stellar network where applicable.
+- Unique and time-limited.
+- Protected against replay.
+- Verifiable by the backend.
+
+Use the canonical SEP-53 message format and the exact cryptographic verification semantics required by the specification.
+
+The backend remains responsible for validating the signature. Never trust a frontend statement that a wallet has been verified.
+
+Never accept an address merely because the frontend supplied it.
+
+Do not use a transaction broadcast as a substitute for message-based ownership verification.
+
+## 2.5 Wallet linking and account management
+
+Preserve the existing multi-wallet user model:
+
+- Privy embedded Stellar wallet remains primary.
+- External wallets are optional.
+- External wallets must be verified before linking.
+- Global wallet-address uniqueness must remain enforced.
+- An address linked to one TrustFlow user must not be linked to another user.
+- The embedded Privy wallet must not be unlinkable through the external-wallet unlink action.
+- Existing active-agreement unlink restrictions must remain in force.
+- Terminal agreement history must remain readable after an eligible external wallet is unlinked.
+
+Avoid creating duplicate wallet records when a user reconnects an already linked wallet.
+
+The interface should distinguish:
+- Primary embedded wallet.
+- Verified external wallets.
+- Pending connection or verification.
+- Unlinked wallets.
+- Failed or cancelled verification.
+
+---
+
+# 3. GOOGLE AND EMAIL AUTHENTICATION
+
+## 3.1 Preserve one identity with multiple linked login methods
+
+The intended architecture is one TrustFlow user identity, represented by one Privy user identity, with multiple verified login methods.
+
+A user may have:
+- Email OTP.
+- Google.
+- Both email OTP and Google.
+
+When Google is explicitly linked to an existing Privy identity, Google should be an additional valid login method for that same identity.
+
+Do not create a second TrustFlow account simply because the user later chooses Google instead of email OTP.
+
+Do not merge accounts merely because their email addresses match.
+
+The verified Privy subject/DID remains the identity key used for TrustFlow account resolution.
+
+## 3.2 Profile interface
+
+Inspect the existing Profile interface and improve its authentication-method presentation without redesigning the entire page.
+
+Show login methods separately and accurately:
+
+- Email OTP: linked or not linked.
+- Google: linked or not linked.
+- Other authentication methods, only if actually supported.
+
+The UI must not infer that a Google account has an Email OTP factor just because Google supplied an email address.
+
+A Google-only account must see Google as linked and Email OTP as not linked.
+
+A user who wants both must explicitly link both.
+
+Provide a clear action to link an available missing method.
+
+Do not show a false successful state when the user cancels the Privy linking modal.
+
+## 3.3 Linking behaviour
+
+Inspect the installed Privy SDK and use its actual supported account-linking hooks and callbacks.
+
+Ensure:
+- Google can be linked to the existing authenticated Privy identity.
+- Email OTP can be linked to the existing authenticated Privy identity.
+- Successful linking updates the profile state.
+- Cancelled linking does not show success.
+- Failed linking displays a useful error.
+- A method already linked is not offered as though it were missing.
+- Linking an identity already belonging to another Privy subject is handled safely.
+- No email-based automatic merging occurs.
+- A linked Google method can be used to log into the same existing account.
+
+Do not assume dashboard-level auto-linking behaviour. Inspect the actual SDK behaviour and distinguish application code from external Privy dashboard configuration.
+
+## 3.4 Fix email-factor detection
+
+Fix the incorrect `hasLinkedEmail` logic in `NavigationShell.tsx`.
+
+The email-factor indicator must use the actual Privy linked-account type for email authentication.
+
+Do not use `user.email` or a Google profile email as proof that an Email OTP login method is linked.
+
+Google profile email may still be displayed as profile information, but it must not be represented as a separate verified Email OTP factor.
+
+Add an automated React/component test for:
+1. Google-only account.
+2. Email-only account.
+3. Account with both methods.
+4. Account with neither method.
+
+---
+
+# 4. AUTHENTICATION SESSION RELIABILITY
+
+## 4.1 Repeated 401 recovery
+
+Fix the `hasAttempted401Resync` lifecycle defect.
+
+The current implementation reportedly allows one successful 401 recovery, but leaves the guard set. A later genuine 401 in the same controller session can therefore cause logout instead of another recovery attempt.
+
+Implement safe retry/coalescing behaviour.
+
+Requirements:
+- A successful recovery must permit future independent recovery attempts.
+- Concurrent requests should not trigger uncontrolled duplicate recovery operations.
+- A retry must not loop indefinitely.
+- A genuine second 401 must be handled correctly.
+- 403, 5xx and network failures must not be treated as proof that the user is unauthenticated.
+- A stale request from a previous account/session must not clear a newer authenticated session.
+
+Add an automated test covering two separate successful 401 recovery cycles within the same controller session.
+
+Also test concurrent 401 requests and retry-loop prevention.
+
+## 4.2 Privy session reconciliation
+
+Preserve the existing TrustFlow session architecture.
+
+Ensure:
+- A confirmed Privy logout clears the TrustFlow session.
+- A stale TrustFlow token does not survive a confirmed unauthenticated Privy state.
+- Legitimate authenticated sessions are not invalidated unnecessarily.
+- Account switching cannot allow an old request to overwrite a newer session.
+- Sandbox behaviour remains limited to non-production environments.
+
+## 4.3 Direct synchronization paths
+
+Inspect `syncPrivyUserDirect()` and every other path that can synchronize a Privy user.
+
+Ensure all synchronization routes pass through the same guarded lifecycle logic.
+
+Remove or safely redirect bypasses that could trigger duplicate provisioning or inconsistent session state.
+
+Do not introduce a second independent wallet-provisioning mechanism.
+
+---
+
+# 5. PRIVY STELLAR WALLET VALIDATION
+
+Inspect the current implementation of `listUserStellarWallets()` and the exact installed Privy API response types.
+
+The current audit identified possible insufficient filtering.
+
+Ensure that the wallet selected as TrustFlow's embedded primary wallet:
+- Belongs to the authenticated Privy subject.
+- Is a genuine eligible embedded/server-owned wallet.
+- Is not an imported wallet.
+- Is not archived.
+- Has a valid Stellar address.
+- Matches the expected wallet metadata and ownership semantics.
+
+Where the API response provides `owner_id`, verify that it matches the authenticated Privy subject.
+
+Inspect the exact response types and API contract before interpreting `imported_at`, `archived_at`, `owner_id` or other fields.
+
+Do not invent fields or assume undocumented semantics.
+
+If an API field is optional, handle its absence according to verified documentation and the project's established security rules.
+
+A wallet whose ownership cannot be established must not silently become the primary embedded wallet.
+
+Add tests for:
+- Valid embedded wallet.
+- Imported wallet.
+- Archived wallet.
+- Foreign owner.
+- Invalid Stellar address.
+- Multiple candidate wallets.
+- No eligible wallet.
+
+Do not create another real Privy wallet to test these cases.
+
+---
+
+# 6. ACTIVE WALLET SELECTION IN AGREEMENT WORKFLOWS
+
+The audit found that `ConversationalWorkspace.tsx` hardcodes `currentUserAddress`.
+
+Fix this with a small, targeted active-wallet selector.
+
+Requirements:
+- Default to the verified Privy embedded primary wallet.
+- Allow the user to select a verified, linked external Stellar wallet.
+- Display the selected wallet type and address.
+- Pass the selected address into the correct agreement creation/request flow.
+- Ensure the correct participant role and address are recorded.
+- Do not allow unverified or unlinked wallets to be selected.
+- Do not allow a stale wallet selection after unlinking or account switching.
+- If the selected wallet is no longer eligible, fall back safely to the primary wallet and explain the change.
+
+In `AgreementDetailRoom`, clearly identify which wallet address is associated with each participant's role.
+
+Do not build an elaborate new wallet-management application or redesign the agreement interface.
+
+The existing Profile and agreement UI should be preserved, with only the necessary controls added.
+
+If per-wallet balances are implemented, query only active verified addresses and label each balance with its corresponding wallet. Do not display the primary wallet's balance as though it belongs to every linked wallet.
+
+Add component tests for:
+- Primary wallet default selection.
+- Selecting a verified external wallet.
+- Correct address passed into agreement creation.
+- Unlinked wallet rejected.
+- Wallet selection reset after account change or unlink.
+- Correct participant wallet displayed in agreement details.
+
+---
+
+# 7. CONCURRENCY AND CROSS-STORE SAFETY
+
+The existing implementation uses JSON persistence and process-local locks.
+
+Do not introduce a database or claim distributed locking has been solved.
+
+The immediate requirement is to close the identified concurrency gaps within the supported single-process architecture.
+
+## 7.1 External wallet challenge consumption
+
+The current verification sequence may consume a challenge before the external wallet uniqueness check and wallet mutation complete.
+
+Fix this so a failed global wallet uniqueness check does not burn an otherwise valid challenge.
+
+Coordinate:
+- Challenge validation.
+- Signature verification.
+- Global address uniqueness.
+- Challenge consumption.
+- User wallet mutation.
+
+Use an appropriate narrow process-local operation lock or reservation mechanism.
+
+Ensure a successful challenge cannot be replayed.
+
+Ensure a failed uniqueness operation does not consume the challenge.
+
+## 7.2 Unlink versus agreement creation
+
+Prevent a race in which:
+1. An external wallet is checked for active agreements.
+2. Another request creates an agreement referencing that wallet.
+3. The wallet is unlinked based on stale information.
+
+Coordinate the relevant operations so that:
+- Agreement creation revalidates that the selected wallet is still active and linked at commit time.
+- Wallet unlink checks active agreement references under compatible coordination.
+- An active agreement cannot be committed with an address that has already become unlinked.
+- An address used by an active agreement cannot be unlinked.
+- Historical terminal agreements remain readable.
+
+Use narrowly scoped operation coordination appropriate for the existing single-process deployment.
+
+Do not create a broad global lock that unnecessarily serializes unrelated user activity.
+
+Add automated tests for both race conditions.
+
+Be explicit that these process-local locks do not protect multiple Node processes or replicas.
+
+---
+
+# 8. SEP-53 DOMAIN VALIDATION
+
+Fix the issue where the request's `Host` header is directly interpolated into the SEP-53 verification message.
+
+The verification domain must come from a canonical configured application origin or a strict trusted-origin allowlist.
+
+Do not trust arbitrary incoming Host or forwarded-host values.
+
+Requirements:
+- Validate the configured origin.
+- Reject invalid or missing production configuration.
+- Use a consistent canonical domain when generating and verifying the message.
+- Do not allow a caller to influence the signed domain through an untrusted request header.
+- Preserve local development functionality through an explicit safe development configuration.
+
+Add tests for:
+- Valid configured origin.
+- Malicious Host header.
+- Malicious forwarded-host header.
+- Missing production origin.
+- Mismatched verification domain.
+
+---
+
+# 9. PRODUCTION BUILD AND TEST HARNESS
+
+Keep the existing `DevPrivySigningTestPanel` and the `VITE_PRIVY_WALLET_TEST_MODE` guard available for the pending manual live signing verification.
+
+Do not delete the harness yet.
+
+However, fix the production build so the development-only signing test panel is not emitted as an orphaned production chunk.
+
+Inspect the current dynamic imports and Vite build configuration.
+
+Use a safe build-time separation or equivalent approach that:
+- Keeps the panel usable in development/test mode.
+- Excludes it from production output.
+- Does not expose development-only controls in the production application.
+- Does not break ordinary production routes or lazy loading.
+
+Add a build verification check confirming the panel is absent from production artifacts while remaining available in development.
+
+Do not remove the panel until the later intentional manual live signing test is complete.
+
+---
+
+# 10. DEPLOYMENT AND JSON PERSISTENCE DOCUMENTATION
+
+The current architecture uses JSON files on disk and process-local coordination.
+
+Document this honestly.
+
+Add or update deployment documentation explaining:
+
+1. TrustFlow currently supports one Node.js process/worker/instance using the JSON persistence layer.
+2. The deployment must use a persistent filesystem/volume for the configured data directory.
+3. Deployments must not run multiple replicas or Node cluster workers against the same JSON files.
+4. Process-local locks and queues do not provide cross-process or distributed coordination.
+5. A restart is safe only to the extent that the hosting environment preserves the data directory and the existing file-write implementation safely completes or recovers operations.
+6. Multi-instance deployment requires a later persistence and concurrency architecture migration, such as a transactional shared database and suitable distributed coordination.
+7. This migration is not part of the current task.
+
+Do not describe JSON persistence as an in-memory-only system.
+
+Do not claim that the application is horizontally scalable with its current file-store implementation.
+
+Do not provision a database or change hosting infrastructure.
+
+---
+
+# 11. METADATA AND PRODUCT-CLAIM ACCURACY
+
+Inspect `index.html`, `metadata.json` and other public metadata.
+
+The current metadata reportedly makes claims about Soroban smart contracts that do not accurately describe the current implementation.
+
+Update wording to describe TrustFlow's actual current capabilities.
+
+Do not imply:
+- Escrow is live.
+- Funds are held by a deployed TrustFlow smart contract.
+- Automatic on-chain release/refund is implemented.
+- A live Soroban escrow contract is deployed.
+
+Use accurate product descriptions reflecting the current Phase 2 status.
+
+Do not change the product's intended future direction. Just remove unsupported present-tense claims.
+
+---
+
+# 12. PRESERVE EXISTING SECURITY AND PRODUCT BOUNDARIES
+
+Retain all previously implemented safeguards:
+
+- Production legacy OTP/Google routes remain disabled with 410.
+- Production sandbox remains disabled.
+- Privy JWT verification remains server-side.
+- Privy subject remains the identity key.
+- Cross-provider email collisions remain protected.
+- Wallet addresses remain globally unique.
+- Wallet immutability rules remain intact.
+- Client-supplied wallet addresses are not trusted.
+- Existing server-side authorization remains intact.
+- Agreement status is not treated as proof of payment.
+- No automatic release or refund is introduced.
+- Disputes are not decided by Gemini.
+- No live transaction is broadcast.
+- No escrow functionality is enabled.
+
+Do not weaken any security rule to make a test pass.
+
+---
+
+# 13. REQUIRED AUTOMATED TESTS
+
+Use the existing testing stack wherever possible.
+
+Do not introduce a large new testing framework unnecessarily.
+
+Add or update automated tests for all the following areas:
+
+### Authentication
+- Two separate successful 401 recovery cycles in one session.
+- Concurrent 401 recovery requests.
+- No infinite retry loop.
+- 403, 5xx and network failures preserve valid authentication.
+- Stale account requests cannot overwrite a newer session.
+- Google-only, email-only, both and neither linked-method states.
+- Google linking cancellation resets UI state.
+- Failed Google linking does not show success.
+- Existing identity conflicts do not merge accounts.
+
+### Privy wallet validation
+- Valid eligible embedded wallet.
+- Imported wallet rejected.
+- Archived wallet rejected.
+- Foreign owner rejected.
+- Invalid address rejected.
+- Multiple candidates handled safely.
+- No eligible wallet handled safely.
+
+### External Stellar wallet connection
+- Wallet picker presents supported providers.
+- Selected provider is used for connection.
+- Address is retrieved from the selected provider.
+- Connection cancellation is handled.
+- Message-signing capability is detected accurately.
+- A connected but incapable wallet is not marked verified.
+- Valid SEP-53 challenge is accepted.
+- Invalid signature is rejected.
+- Expired challenge is rejected.
+- Replayed challenge is rejected.
+- Challenge is not consumed when global wallet uniqueness fails.
+- Wallet linked to another user is rejected.
+
+### Agreement wallet selection
+- Embedded primary is the default.
+- Verified external wallet can be selected.
+- Correct selected address reaches the agreement flow.
+- Unverified/unlinked address is rejected.
+- Account switch and unlink invalidate stale selection.
+- Participant wallet/address is correctly identified in agreement details.
+
+### Concurrency
+- Concurrent attempts to link the same external address.
+- Challenge verification and uniqueness failure.
+- Unlink racing against agreement creation.
+- Agreement creation using a wallet that was just unlinked.
+- Active agreement prevents unlink.
+- Terminal historical agreement remains readable after eligible unlink.
+
+### Domain security
+- Configured canonical domain is used.
+- Untrusted Host cannot change the challenge domain.
+- Untrusted forwarded-host cannot change the challenge domain.
+- Missing production configuration fails safely.
+
+### Production build
+- Development signing harness remains available in development.
+- Production output does not emit the development signing panel chunk.
+- Production routes remain functional.
+- No development-only controls are exposed in production.
+
+Tests must exercise the actual application logic. Do not add meaningless tests that merely assert that a function exists.
+
+---
+
+# 14. VALIDATION AND FINAL REPORT
+
+After implementation:
+
+Run the existing project commands, including:
+- Lint.
+- Complete automated test suite.
+- TypeScript checks, if separate.
+- Production build.
+
+Report the actual command output and results.
+
+Do not report a test as passing if it was skipped, mocked without being labelled, or not executed.
+
+Provide a concise but complete implementation report containing:
+
+1. Summary of what changed.
+2. Exact modified files.
+3. New dependencies, if any, and why they were necessary.
+4. Stellar wallet integration approach selected and the exact version/API used.
+5. Wallet capability matrix and what remains unverified.
+6. Google/email linking behaviour after the change.
+7. Authentication and session fixes.
+8. Wallet-selection changes in agreement workflows.
+9. Concurrency fixes and their single-process limitations.
+10. SEP-53 domain-security changes.
+11. Production build changes.
+12. Deployment documentation changes.
+13. Lint result.
+14. Test result, including suite and test counts.
+15. TypeScript/build result.
+16. Known limitations.
+17. Manual integration tests that still require the user's real browser, configured Privy application and installed wallet extensions.
+
+Clearly distinguish:
+- Implemented and automatically tested.
+- Implemented but not live-integrated-tested.
+- Documented but not implemented.
+- Blocked by an SDK limitation or external configuration.
+
+Do not start Phase 3.
+
+Do not perform another wallet creation experiment.
+
+Do not broadcast any transaction.
+
+Do not claim Phase 2 is signed off.
+
+The final state of this task should be a carefully remediated Phase 2 implementation ready for a separate independent read-only verification audit.

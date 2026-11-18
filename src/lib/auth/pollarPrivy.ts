@@ -1,7 +1,8 @@
 import { createPrivyAdapter, PrivyAdapterProvider } from "@pollar/privy-adapter";
 import type { InteractiveAuthAdapter } from "@pollar/core";
 
-export const PRIVY_APP_ID = (import.meta.env.VITE_PRIVY_APP_ID as string) || "";
+const viteEnv = (import.meta as { env?: Record<string, string | undefined> }).env;
+export const PRIVY_APP_ID = viteEnv?.VITE_PRIVY_APP_ID || "";
 export const IS_PRIVY_CONFIGURED = Boolean(
   PRIVY_APP_ID &&
   PRIVY_APP_ID.trim().length > 0 &&

@@ -54,9 +54,11 @@ export function createAuthController(authService: AuthService) {
             ? body.accessToken
             : headerToken;
         const stellarAddress = body.stellarAddress as string | undefined;
+        const disableAutoProvision = body.disableAutoProvision === true;
         const result = await authService.authenticateWithPrivy({
           accessToken: accessToken || "",
           stellarAddress,
+          disableAutoProvision,
         });
         res.json(result);
       } catch (err) {
@@ -81,6 +83,51 @@ export function createAuthController(authService: AuthService) {
         }
         const { stellarAddress } = req.body || {};
         const result = await authService.linkExternalWallet(req.authUser, stellarAddress);
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async createExternalWalletChallenge(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        if (!req.authUser) {
+          return next(new AppError(401, "UNAUTHORIZED", "Authentication required."));
+        }
+        const address = typeof req.body?.address === "string" ? req.body.address : "";
+        const provider = typeof req.body?.provider === "string" ? req.body.provider : undefined;
+        const result = await authService.createExternalWalletChallenge(req.authUser, address, provider);
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async verifyExternalWalletChallenge(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        if (!req.authUser) {
+          return next(new AppError(401, "UNAUTHORIZED", "Authentication required."));
+        }
+        const { challengeId, address, signature } = req.body || {};
+        const result = await authService.verifyExternalWalletChallenge(req.authUser, {
+          challengeId,
+          address,
+          signature,
+        });
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    },
+
+    async unlinkExternalWallet(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+      try {
+        if (!req.authUser) {
+          return next(new AppError(401, "UNAUTHORIZED", "Authentication required."));
+        }
+        const rawParam = req.params?.walletId;
+        const walletId = Array.isArray(rawParam) ? rawParam[0] : rawParam;
+        const result = await authService.unlinkExternalWallet(req.authUser, walletId || "");
         res.json(result);
       } catch (err) {
         next(err);

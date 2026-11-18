@@ -1,0 +1,935 @@
+# TRUSTFLOW — MILESTONE 1
+# COMPREHENSIVE AUTHENTICATION, SESSION & MULTI-WALLET IMPLEMENTATION
+
+**MODE: IMPLEMENTATION AUTHORIZED**
+
+You have completed the read-only Milestone 1 audit. The user has reviewed the report and approved the overall implementation direction.
+
+You are now authorized to implement the complete Milestone 1 scope described below.
+
+This is one coordinated implementation milestone. Do not stop after each section to request approval. Work through the implementation in the correct dependency order, make the necessary connected changes, run the relevant tests and build checks, and return one comprehensive implementation report.
+
+Do not expand the task into unrelated refactoring or a general application rewrite.
+
+---
+
+# 1. PRODUCT AND ARCHITECTURAL DIRECTION
+
+TrustFlow is an AI-assisted conditional-payment application built around Stellar.
+
+Its primary audience is freelancers receiving international payments. Other use cases include protected purchases, community bounties and grants.
+
+TrustFlow is not a marketplace.
+
+The intended user journey:
+
+1. User registers or signs in using email OTP or Google through Privy.
+2. User receives a Privy embedded Stellar wallet.
+3. User may connect external Stellar wallets through their profile.
+4. User creates an agreement.
+5. Both parties accept the same immutable agreement version.
+6. The agreement is funded through the escrow/payment system.
+7. Work is completed and evidence is submitted.
+8. The appropriate party reviews the evidence.
+9. Funds are released, refunded or handled through a human dispute process.
+
+Gemini may assist with drafting and explaining agreements. It must not independently determine whether evidence is truthful, adjudicate disputes or authorize financial release/refund.
+
+Financial integrity requirements:
+- The blockchain or escrow provider is the source of truth for financial state.
+- Frontend status is not proof of payment.
+- Never fabricate transaction hashes or confirmations.
+- Both parties must accept the same immutable agreement version.
+- Deadlines must not automatically release or refund funds unless the actual contract explicitly permits it.
+- Disputes require human or independent review.
+- Do not represent escrow functionality as operational when its integration is not implemented.
+
+# 2. APPROVED ARCHITECTURAL DECISIONS
+
+Treat these as binding implementation decisions.
+
+## A. Privy owns real-user authentication
+
+Privy handles:
+- Email OTP.
+- Google OAuth.
+- User identity.
+- Authentication state.
+- Privy access tokens.
+- Embedded Stellar wallet provisioning and management.
+
+TrustFlow must not maintain a competing production email OTP or Google authentication system.
+
+When Privy is unavailable or misconfigured in production, show a clear configuration/service-unavailable state. Do not silently fall back to legacy authentication.
+
+The development sandbox remains available separately, strictly outside production.
+
+## B. Retain the TrustFlow application session
+
+The audit recommends retaining the existing opaque `tf-sess-*` TrustFlow session token for Milestone 1.
+
+Do not replace it with direct per-request Privy access-token authentication.
+
+The target flow is:
+
+1. Privy authenticates the user.
+2. TrustFlow verifies the Privy access token.
+3. TrustFlow retrieves authoritative Privy identity and wallet information.
+4. TrustFlow resolves or creates the canonical TrustFlow user record.
+5. TrustFlow issues its own application session only after successful synchronization and readiness checks.
+6. Frontend uses the TrustFlow session for protected application requests.
+
+Preserve server-side session revocation and development sandbox compatibility.
+
+Fix the synchronization and logout defects instead of replacing the session architecture.
+
+## C. Privy owns identity linking
+
+Use Privy's authenticated account-linking capabilities for email and Google.
+
+Do not merge TrustFlow users merely because their email addresses match.
+
+The canonical TrustFlow identity remains the verified Privy subject.
+
+If Privy cannot establish that two login methods belong to the same identity, do not silently merge them.
+
+## D. One TrustFlow account, multiple Stellar wallets
+
+A user may have:
+- One Privy embedded Stellar wallet.
+- One or more verified external Stellar wallets.
+
+Connecting an external wallet must never overwrite the embedded wallet or corrupt custody information.
+
+The existing Connect Wallet feature must remain available and be made secure.
+
+## E. One coordinated implementation
+
+Implement all four connected areas:
+
+1. Production authentication and legacy identity safety.
+2. Server-coordinated embedded wallet provisioning.
+3. Multi-wallet data model and secure external wallet linking.
+4. Session reconciliation, API unauthorized handling and Privy account linking.
+
+Do not create unnecessary sub-phases or stop for approval between these areas.
+
+---
+
+# 3. PRESERVE COMPLETED WORK
+
+This is an existing project, not a fresh implementation.
+
+Preserve the following:
+
+### Phase 1 — Codebase hygiene
+Previously completed:
+- Invite functionality removed from the active flow.
+- Custom escrow engine decoupled from the active application.
+- Browser fetch hacks removed.
+- Vite configuration corrected.
+- Development and production startup verified.
+- Gemini endpoints verified.
+
+Do not reintroduce removed functionality.
+
+### Phase 2.1 — Backend Privy identity verification
+Previously implemented:
+- Privy JWT verification using configured verification key or JWKS.
+- Authoritative Privy user lookup.
+- User ID consistency checks.
+- Frozen-account checks.
+- Stellar wallet extraction and StrKey validation.
+- Client wallet spoofing rejection.
+- Zero/one/multiple eligible wallet handling.
+- Backend-only Privy app secret.
+
+Preserve this security boundary.
+
+### Phase 2.2A — Live Privy wallet compatibility experiment
+This experiment is complete.
+
+Exactly one server-created Stellar wallet was created for the dedicated test identity.
+
+The report established that:
+- The wallet appeared in Privy linked accounts.
+- Frontend and backend wallet extraction worked.
+- Wallet metadata matched the required embedded-wallet criteria.
+- `useSignRawHash()` successfully signed a raw hash in a standalone browser context.
+- Local Ed25519 verification succeeded.
+- No transaction was broadcast.
+
+Do not repeat this experiment.
+
+Do not create, import, export or provision another test wallet during implementation or testing.
+
+Preserve:
+- `VITE_PRIVY_WALLET_TEST_MODE`.
+- `DevPrivySigningTestPanel`.
+- Existing test-mode safeguards.
+
+These require a separate future cleanup decision.
+
+### Phase 2.2B Step 1 — Atomic Privy user upsert
+Previously implemented:
+- `upsertPrivyUser`.
+- Atomic `usersStore.update(...)`.
+- Matching by exact Privy subject.
+- Wallet uniqueness and immutability checks.
+- Preservation of existing profile data.
+- Concurrency and retry tests.
+
+Previously reported test baseline: 46/46.
+
+Preserve the atomic upsert. Extend it carefully for multi-wallet support without reintroducing non-atomic user creation.
+
+Remember that JSON store locking is process-local. Do not claim multi-instance transactional guarantees.
+
+---
+
+# 4. IMPLEMENTATION ORDER
+
+Complete the following in order. This is an internal dependency order, not a request to stop and ask for approval after every step.
+
+## STEP 1 — PRIVY-ONLY PRODUCTION AUTHENTICATION AND LEGACY IDENTITY SAFETY
+
+### Objective
+
+Make Privy the only real-user authentication provider in production and eliminate unsafe cross-provider email merging.
+
+### Inspect and update
+
+Likely files include:
+
+- `backend/src/routes/auth.routes.ts`
+- `backend/src/controllers/auth.controller.ts`
+- `backend/src/services/auth.service.ts`
+- `backend/src/config/runtime.config.ts`
+- `src/App.tsx`
+- `src/components/AuthModal.tsx`
+- `src/lib/auth/privyLifecycle.ts`
+- Related authentication tests.
+
+Verify exact current files before editing.
+
+### Required changes
+
+1. Disable production access to:
+   - `POST /api/auth/otp/start`
+   - `POST /api/auth/otp/verify`
+   - `POST /api/auth/google`
+
+2. Return an explicit error such as `410 LEGACY_AUTH_DISABLED` or an appropriately chosen unavailable response when those routes are disabled.
+
+3. Ensure the frontend does not silently fall back to custom OTP or Google authentication when Privy is missing in a production build.
+
+4. Show a clear authentication configuration-unavailable state when production Privy configuration is missing.
+
+5. Preserve the development sandbox, gated by the existing production and sandbox configuration checks.
+
+6. Remove unsafe cross-provider email matching from legacy authentication code.
+
+   In particular:
+   - Do not allow `verifyEmailOtp` to select and mutate a Privy or Google record merely because the email matches.
+   - Do not allow `authenticateWithGoogle` to overwrite another provider's identity based on email matching.
+   - Use exact provider-specific identity matching where legacy code remains available.
+
+7. Preserve historical user records. Do not delete or silently reassign users or their agreements.
+
+8. Keep the existing `upsertPrivyUser` behaviour keyed by verified Privy subject.
+
+9. Review capability reporting so the frontend does not advertise legacy production authentication methods as available when they are disabled.
+
+### Important
+
+Do not delete all legacy authentication code in this pass.
+
+The objective is a safe production cutover, not destructive cleanup.
+
+Keep development sandbox functionality independent of real-user authentication.
+
+### Acceptance criteria
+
+- Production cannot register or authenticate real users through the custom OTP/Google routes.
+- Missing production Privy configuration does not expose broken legacy forms.
+- Development sandbox still works in its intended non-production environment.
+- Legacy email matching cannot merge identities across providers.
+- Existing Privy records and agreements remain intact.
+
+---
+
+## STEP 2 — SERVER-COORDINATED PRIVY STELLAR WALLET PROVISIONING
+
+### Objective
+
+Remove the fragile browser-controlled wallet creation path from the production authentication lifecycle.
+
+Provisioning must be coordinated by the backend and recover safely from reloads, concurrent requests, interruptions and ambiguous API responses.
+
+### Inspect and update
+
+Likely files include:
+
+- `backend/src/services/privyClient.service.ts`
+- `backend/src/services/auth.service.ts`
+- `backend/src/repositories/auth.repository.ts`
+- `backend/src/types/backend.types.ts`
+- `backend/src/repositories/jsonStore.ts` or the existing JSON store implementation.
+- `src/lib/auth/privyLifecycle.ts`
+- `src/lib/auth/AuthContext.tsx`
+- `src/App.tsx`
+- Relevant backend and frontend tests.
+
+### Required provisioning sequence
+
+1. Frontend authenticates through Privy.
+2. Frontend sends its current Privy access token to `POST /api/auth/privy-sync`.
+3. Backend verifies the token using the existing `JwtVerifierService`.
+4. Backend resolves the verified Privy subject.
+5. Backend queries authoritative Privy user/wallet state.
+6. If exactly one eligible embedded Stellar wallet exists, reuse it.
+7. If none exists, coordinate a provisioning attempt.
+8. Verify the result against authoritative Privy state.
+9. Persist the TrustFlow user and verified wallet association.
+10. Issue the TrustFlow application session only after the required identity and wallet checks succeed.
+
+### Server-side provisioning coordination
+
+Implement persistent provisioning state using the existing JSON storage architecture, such as `.data/provisioning.json`, following existing repository/store patterns.
+
+Use a record keyed by the exact Privy subject.
+
+The record should capture sufficient information to recover an interrupted operation, including:
+- Privy subject.
+- Provisioning status.
+- Stable idempotency key.
+- External identifier if supported and useful.
+- Wallet ID when confirmed.
+- Stellar address when confirmed.
+- Attempt metadata.
+- Updated timestamp.
+- Sanitized error information.
+
+Use a per-subject in-process lock to prevent concurrent requests within the current Node process from independently provisioning wallets.
+
+Do not claim that a process-local lock protects multiple server instances.
+
+### Privy API requirements
+
+Inspect the exact installed SDK/API type definitions and current `PrivyClientService` request patterns.
+
+Verify:
+- Stellar support in server wallet creation.
+- Correct owner field.
+- Correct wallet query parameters.
+- Correct `privy-idempotency-key` header.
+- Supported `external_id` format and behaviour.
+- The actual duration and semantics of idempotency.
+- How created wallets appear in authoritative user/wallet responses.
+
+Do not assume `external_id` provides permanent per-user singleton enforcement.
+
+Do not assume the idempotency key provides permanent protection. The reported guarantee is time-limited.
+
+### Ambiguous response handling
+
+This is a critical financial/security requirement.
+
+If a wallet-creation request times out, disconnects or returns an ambiguous error:
+
+- Do not assume creation failed.
+- Do not immediately issue another creation request.
+- Re-query Privy user and wallet state.
+- If one eligible wallet exists, reuse it and mark provisioning complete.
+- If more than one exists, fail safely and report the conflict.
+- If none exists, evaluate the persisted provisioning state and idempotency window before deciding whether a retry is safe.
+- Reuse the same idempotency key while it remains valid.
+- Never blindly retry after an uncertain outcome.
+
+### Frontend changes
+
+Remove production automatic wallet creation through browser `useCreateWallet()` from the authentication lifecycle.
+
+The frontend should wait for backend provisioning/synchronization.
+
+After backend success, call `refreshUser()` on the Privy client as a best-effort hydration operation so the client SDK can discover the server-created wallet for later signing.
+
+A refresh failure must not cause a second wallet creation.
+
+Preserve the existing `VITE_PRIVY_WALLET_TEST_MODE` semantics. When test mode intentionally disables provisioning, it must continue to do so.
+
+Do not remove the Phase 2.2A test panel or guard.
+
+### Testing requirements
+
+Using mocked Privy API requests only, test:
+
+- Existing embedded wallet is reused without creation.
+- No wallet exists, so exactly one provisioning request is made.
+- Concurrent sync requests for the same subject do not independently create wallets.
+- A timeout followed by an authoritative existing wallet reuses that wallet.
+- A timeout followed by no wallet follows the safe retry policy.
+- Persisted provisioning state survives a simulated service restart.
+- More than one embedded Stellar wallet produces a safe deterministic failure.
+- Existing Privy user ID and embedded wallet address remain unchanged.
+
+Do not make live wallet-creation requests.
+
+### Acceptance criteria
+
+- Production frontend no longer races to create embedded wallets.
+- Backend coordinates provisioning.
+- Existing users reuse their existing wallets.
+- Ambiguous operations are reconciled before retry.
+- The TrustFlow user record is only synchronized after authoritative wallet verification.
+
+---
+
+## STEP 3 — ADDITIVE MULTI-WALLET MODEL AND SECURE FREIGHTER LINKING
+
+### Objective
+
+Replace the unsafe single-wallet overwrite behaviour with a secure wallet association model while preserving the existing Connect Wallet capability and all existing agreement access.
+
+### Inspect and update
+
+Likely files include:
+
+- `backend/src/types/backend.types.ts`
+- `backend/src/repositories/auth.repository.ts`
+- `backend/src/services/auth.service.ts`
+- `backend/src/services/agreement.service.ts`
+- `backend/src/controllers/auth.controller.ts`
+- `backend/src/routes/auth.routes.ts`
+- `src/lib/stellar/wallet.ts`
+- `src/lib/auth/privyLifecycle.ts`
+- `src/lib/auth/AuthContext.tsx`
+- `src/App.tsx`
+- Relevant agreement and security tests.
+
+### A. Additive wallet data model
+
+Extend `UserRecord` with a wallet collection and an explicit primary wallet address.
+
+Use a clean typed model containing, at minimum:
+
+- Wallet record ID.
+- Stellar public address.
+- Custody/source.
+- Provider name.
+- Privy wallet ID where applicable.
+- Verification method.
+- Verified timestamp.
+- Linked timestamp.
+- Optional unlink timestamp.
+- Active/unlinked status.
+- Primary designation.
+
+Retain existing compatibility fields:
+- `stellarAddress`
+- `walletCustody`
+
+Do not remove or rename them in this milestone.
+
+Implement a normalization helper for legacy users.
+
+When a legacy record has no wallet collection, derive a compatible wallet record from its existing `stellarAddress` and `walletCustody`.
+
+Do not create duplicate wallet records during repeated normalization.
+
+The existing embedded Privy wallet must remain correctly classified as `privy_embedded`.
+
+For this milestone, retain the embedded wallet as the primary wallet. Do not introduce a complex primary-wallet switching feature.
+
+Keep the legacy scalar fields synchronized with the designated primary wallet.
+
+### B. Extend atomic Privy user upsert
+
+Update `upsertPrivyUser` to understand the new wallet collection.
+
+Requirements:
+- Preserve existing TrustFlow user ID.
+- Preserve creation timestamps and profile data.
+- Preserve the verified embedded wallet association.
+- Avoid duplicate wallet entries.
+- Enforce global active-wallet uniqueness.
+- Keep legacy scalar fields consistent.
+- Remain atomic within the existing repository update mechanism.
+
+Do not replace the existing atomic upsert with a read-then-write sequence.
+
+### C. Secure external wallet challenge and verification
+
+The current `POST /api/auth/wallet/link` endpoint must no longer accept a public address as proof of ownership.
+
+Implement a challenge-response flow for Freighter using SEP-53, after verifying the exact installed Freighter API and Stellar SDK method signatures.
+
+Suggested endpoints:
+
+`POST /api/auth/wallets/external/challenge`
+
+`POST /api/auth/wallets/external/verify`
+
+Both require authenticated TrustFlow sessions.
+
+Challenge creation must:
+- Reject sandbox users.
+- Validate the Stellar address.
+- Bind the challenge to the authenticated TrustFlow user.
+- Bind it to the exact wallet address.
+- Include the appropriate application/domain and Stellar network context.
+- Use a cryptographically secure random nonce.
+- Have a short expiry, such as five minutes.
+- Be single-use.
+- Prevent replay across users or addresses.
+- Avoid exposing sensitive internal data.
+
+Persist challenge state using the existing JSON repository/storage pattern.
+
+Verification must:
+- Check the authenticated user.
+- Check challenge ownership.
+- Check expiry.
+- Check exact wallet-address match.
+- Check that the challenge has not already been consumed.
+- Decode the signature correctly.
+- Verify the SEP-53 signature using the installed Stellar SDK.
+- Reject invalid signatures.
+- Enforce global active-wallet uniqueness.
+- Add the verified external wallet without overwriting the embedded wallet.
+- Return a safe wallet summary.
+
+Use the exact installed `@stellar/stellar-sdk@17.4.0` verification API and exact installed `@stellar/freighter-api@6.0.0` signing API.
+
+Do not invent method names, parameter shapes or signature encodings.
+
+If the current browser integration uses deprecated `window.freighterApi`, inspect compatibility and make the smallest reliable change necessary for the existing supported Freighter experience.
+
+If a direct dependency is required for reliable Freighter integration, first inspect the package already available in the current dependency tree. Do not add unnecessary wallet libraries.
+
+### D. Challenge concurrency and replay protection
+
+A challenge must not be successfully consumed twice.
+
+The verification process must prevent concurrent replay attempts.
+
+Use the strongest practical atomicity supported by the current single-process JSON architecture.
+
+Document the limitation that the existing process-local JSON store is not a multi-instance transactional database.
+
+Do not claim stronger guarantees than the implementation provides.
+
+### E. Retire unsafe endpoint
+
+Disable or deprecate:
+
+`POST /api/auth/wallet/link`
+
+Return an explicit error such as `410 GONE` or `LEGACY_WALLET_LINK_DISABLED`.
+
+Update all active frontend paths so no supported action uses the insecure endpoint.
+
+Do not remove the visible Connect Wallet capability.
+
+### F. Wallet unlinking policy
+
+Support unlinking external wallets only if it can be implemented safely within this milestone.
+
+Rules:
+- A Privy embedded wallet cannot be removed or replaced through external wallet endpoints.
+- A wallet cannot be unlinked while referenced by an active agreement.
+- Unlinking must not transfer ownership or erase agreement history.
+- Preserve historical wallet-to-agreement associations.
+- Define how closed agreements retain historical access and display.
+- Do not allow an unlinked wallet to authenticate new actions simply because it appears in historical records.
+
+If safe unlinking requires more work than can be completed reliably, omit the unlink endpoint in this milestone and report that it is deliberately deferred. Do not implement an unsafe shortcut.
+
+### G. Agreement authorization
+
+Update `AgreementService.getUserIdentities()` or its current equivalent to support verified wallet associations.
+
+Agreement access must continue to work for:
+- The canonical TrustFlow user ID.
+- The verified embedded wallet.
+- Verified external wallets associated with the user, subject to the agreement's actual role and signer rules.
+
+Do not grant a user access merely because a wallet address was submitted by the browser.
+
+Do not broaden agreement permissions beyond the existing agreement role/state rules.
+
+Preserve existing agreement records and their historical ownership.
+
+### H. Freighter frontend flow
+
+Update the existing Connect Wallet action so it:
+
+1. Connects to Freighter.
+2. Obtains the selected public address.
+3. Requests a backend challenge.
+4. Asks Freighter to sign the exact challenge message using the supported SEP-53 method.
+5. Sends the challenge identifier and signature to the backend verification endpoint.
+6. Displays success only after backend verification succeeds.
+7. Displays a useful failure state if signing or verification fails.
+
+Do not add a full wallet switcher or new wallet-provider catalogue.
+
+Do not implement Albedo, WalletConnect, Ledger or other providers in this milestone.
+
+### Acceptance criteria
+
+- Submitting an arbitrary valid-format public key cannot link a wallet.
+- A valid SEP-53 signature can link the supported Freighter wallet.
+- Invalid, expired, replayed and cross-user challenges are rejected.
+- Linking Freighter does not overwrite the Privy embedded wallet.
+- Wallet custody metadata remains correct.
+- Duplicate active wallet associations are rejected.
+- Existing agreements remain accessible through their verified associated wallets.
+- Existing agreement role and signer restrictions remain intact.
+
+---
+
+## STEP 4 — SESSION RECONCILIATION, 401 HANDLING AND PRIVY ACCOUNT LINKING
+
+### Objective
+
+Make Privy and TrustFlow session states consistent, prevent stale authenticated interfaces and expose Privy's account-linking capability.
+
+### Inspect and update
+
+Likely files include:
+
+- `src/lib/auth/privyLifecycle.ts`
+- `src/lib/auth/AuthContext.tsx`
+- `src/App.tsx`
+- `src/components/ConversationalWorkspace.tsx`
+- `src/components/AgreementDetailRoom.tsx`
+- Existing API helpers and authentication tests.
+
+### A. Fix reload after Privy logout
+
+The existing `wasPrivyAuthenticated` variable initializes to false on page reload.
+
+Fix reconciliation so that:
+
+- If Privy is configured and has finished initializing,
+- and Privy confirms the user is unauthenticated,
+- and the restored TrustFlow session belongs to a Privy user,
+
+then the stale TrustFlow session must be invalidated and the frontend must return to the unauthenticated state.
+
+Do not invalidate development sandbox sessions merely because Privy is unauthenticated.
+
+Do not mistake a transient network/loading state for a confirmed logout.
+
+Use actual SDK readiness/authentication state and the existing lifecycle architecture.
+
+### B. Centralize authenticated API handling
+
+Create or extend a shared authenticated API request helper or unauthorized-response callback.
+
+Use it consistently across:
+- App.tsx.
+- ConversationalWorkspace.tsx.
+- AgreementDetailRoom.tsx.
+- Balance refresh.
+- Other authenticated API callers discovered during implementation.
+
+Handle genuine authentication failures consistently.
+
+Important:
+- Do not clear the session on every generic HTTP error.
+- Distinguish authentication failures from authorization/business-rule failures.
+- A 401 produced by invalid, expired or revoked TrustFlow authentication must invalidate the local session.
+- A 403 or other business-level rejection must not automatically log the user out.
+- A temporary network failure must not be interpreted as a confirmed logout.
+- Avoid infinite retry loops.
+- If Privy is still authenticated, allow a controlled synchronization/re-authentication path.
+- If Privy is unauthenticated, return the user to the login state.
+- Preserve the existing `trustflow_auth_token` storage key unless a demonstrated technical reason requires otherwise.
+
+### C. Fix syncPrivyUserDirect
+
+The current `syncPrivyUserDirect()` bypasses lifecycle concurrency and epoch protections.
+
+Remove the bypass or route it through the same guarded synchronization path as `syncPrivySession()`.
+
+Ensure:
+- Account switching invalidates old in-flight work.
+- An old user's sync cannot overwrite the new user's session.
+- Duplicate sync requests do not issue competing wallet provisioning requests.
+- Failed sync does not create an endless retry loop.
+
+### D. Account switching
+
+Inspect all account-dependent UI state.
+
+Ensure a user switch resets:
+- Previous user data.
+- Stale agreement data where appropriate.
+- Wallet notices.
+- Authentication errors.
+- Account-specific temporary UI state.
+- In-flight requests that could overwrite new-account data.
+
+Do not redesign existing screens.
+
+### E. Privy account linking
+
+Integrate the installed SDK's supported authenticated linking capabilities.
+
+The audit identified:
+- `linkEmail`
+- `linkGoogle`
+- `useLinkAccount`
+- `useLinkEmail`
+- `useLinkWithOAuth`
+
+Verify the exact method signatures and behaviour in the installed SDK before implementing.
+
+Expose appropriate actions through AuthContext and the existing account/profile UI where available.
+
+Requirements:
+- Linking starts from an already authenticated Privy identity.
+- Email and Google linking use Privy's supported authenticated linking process.
+- Linking must preserve the same Privy subject and TrustFlow user record when successful.
+- After successful linking, refresh Privy user state and synchronize verified profile fields.
+- Do not merge a separate Privy identity just because its email matches.
+- If Privy reports an account already linked elsewhere, show a safe error.
+- If linking is interrupted, the existing account and wallet remain intact.
+
+Do not assume Privy Dashboard settings can be changed from this codebase.
+
+Implement the SDK integration supported by the installed package. Clearly identify any external Dashboard configuration that must be manually confirmed before enabling the relevant flow in production.
+
+Do not fabricate a successful linking state.
+
+### Acceptance criteria
+
+- Privy logout followed by reload cannot leave a stale Privy TrustFlow session authenticated.
+- Development sandbox reload behaviour remains intact.
+- Genuine backend authentication 401 responses clear stale sessions consistently.
+- Network failures do not cause accidental logout.
+- Account switching cannot leak stale user state.
+- Privy account-linking actions use the installed SDK's actual supported APIs.
+- No email-only account merging is introduced.
+
+---
+
+# 5. CROSS-CUTTING SECURITY AND DATA REQUIREMENTS
+
+Throughout all implementation steps:
+
+1. Never trust a browser-supplied user ID as identity proof.
+2. Never trust a browser-supplied wallet address as proof of ownership.
+3. Verify Privy tokens server-side.
+4. Use authoritative Privy account state for embedded wallets.
+5. Preserve canonical TrustFlow user identity by Privy subject.
+6. Preserve existing user IDs and agreement ownership.
+7. Enforce wallet uniqueness.
+8. Keep Privy secrets server-side.
+9. Do not expose tokens, secrets, signatures or sensitive internal errors in logs.
+10. Handle duplicate requests and interrupted operations safely.
+11. Keep financial state tied to verified chain/escrow evidence.
+12. Do not modify the existing agreement state machine unless required for wallet authorization compatibility.
+13. Do not change the existing approved visual design.
+14. Do not perform unrelated refactoring.
+
+# 6. DATA MIGRATION AND BACKWARD COMPATIBILITY
+
+The current application uses JSON persistence.
+
+Do not introduce PostgreSQL, another database, cloud resources or a new infrastructure dependency.
+
+Preserve the existing `.data` records.
+
+Implement additive normalization so existing user records without a `wallets` array continue to work.
+
+Ensure:
+- Existing Privy user IDs do not change.
+- Existing embedded Stellar addresses do not change.
+- Existing agreement references remain valid.
+- Existing sandbox records continue to work.
+- Existing session records remain usable where appropriate.
+- Existing API response fields remain compatible.
+- Legacy authentication records are not deleted.
+- The new wallet collection does not duplicate the existing embedded wallet.
+
+If a historical record cannot be safely mapped, preserve it and report the issue. Do not guess a migration identity.
+
+# 7. TESTING REQUIREMENTS
+
+The last read-only audit reported a baseline of 46/46 passing tests across 10 suites.
+
+Treat that as the reported starting baseline, not as proof that the current implementation remains unchanged.
+
+Before implementation, run the existing test suite and record the result.
+
+After implementation, run the full existing suite and all relevant new tests.
+
+Add or update tests covering:
+
+### Authentication
+- Privy-only production authentication.
+- Missing Privy production configuration.
+- Legacy route rejection.
+- Development sandbox preservation.
+- Cross-provider email collision rejection.
+- Existing Privy user upsert preservation.
+
+### Embedded wallet provisioning
+- Existing wallet reuse.
+- Exactly one creation attempt under concurrent requests.
+- Ambiguous timeout recovery.
+- Persisted provisioning recovery.
+- Duplicate embedded wallet detection.
+- Test-mode provisioning guard.
+
+### External wallet linking
+- Valid SEP-53 signature.
+- Invalid signature.
+- Expired challenge.
+- Replayed challenge.
+- Cross-user challenge.
+- Address mismatch.
+- Duplicate wallet across users.
+- Embedded wallet immutability.
+- Legacy unsafe endpoint rejection.
+- Correct wallet metadata.
+- Existing agreement access after adding another wallet.
+- Active-agreement unlink protection if unlinking is implemented.
+
+### Session lifecycle
+- Reload after Privy logout.
+- Preserve sandbox sessions.
+- Invalid TrustFlow session handling.
+- Genuine 401 recovery.
+- 403 does not cause logout.
+- Network failure preserves session.
+- Account switching.
+- Old in-flight sync cannot overwrite the new account.
+- `syncPrivyUserDirect` cannot bypass guards.
+
+### Privy account linking
+- Supported email-linking method.
+- Supported Google-linking method.
+- Successful linking preserves Privy subject.
+- Duplicate/previously linked identity rejection.
+- Interrupted linking leaves the existing account intact.
+
+Use mocks for external API operations.
+
+Do not create live wallets or perform live blockchain transactions during testing.
+
+Do not weaken or delete existing tests simply to make the suite pass.
+
+# 8. BUILD AND CODE QUALITY
+
+After implementation:
+
+1. Run the full test suite.
+2. Run TypeScript checks.
+3. Run lint checks if configured.
+4. Run the production build.
+5. Inspect the changed-file diff.
+6. Check for unused imports and dead code introduced by the changes.
+7. Confirm no secrets or environment values were exposed.
+8. Confirm no unrelated files or UI areas were changed.
+
+Fix implementation-caused failures before reporting completion.
+
+Do not claim a check passed unless it was actually run and its result is available.
+
+# 9. EXPLICITLY DEFERRED
+
+Do not implement these items as part of this milestone:
+
+- Full multi-wallet switcher UI.
+- Custom primary-wallet selection UI.
+- Albedo, WalletConnect, Ledger or additional external wallet providers.
+- SEP-10 fallback for wallets without SEP-53 support.
+- Full deletion of all legacy authentication code and unused adapters.
+- JSON store to PostgreSQL migration.
+- Cloud infrastructure changes.
+- Removal of Phase 2.2A test harness.
+- Removal of `VITE_PRIVY_WALLET_TEST_MODE`.
+- Trustless Work escrow funding/release/refund integration.
+- Phase 3.
+- General UI redesign.
+
+# 10. IMPLEMENTATION EXECUTION RULES
+
+- You are authorized to implement the complete scope above.
+- Do not ask for approval between the four implementation steps.
+- Do not stop after producing another audit or implementation plan.
+- Inspect the actual current files before modifying them.
+- Follow the dependency order.
+- Prefer minimal targeted modifications.
+- Reuse existing services, repositories, types, hooks and test patterns.
+- Do not create duplicate authentication or wallet-provisioning systems.
+- Do not remove completed work.
+- Do not install dependencies unless an essential missing dependency is demonstrated. If one is genuinely necessary, explain it in the final report and avoid proceeding with an unnecessary replacement library.
+- Do not alter Privy Dashboard settings or environment variables.
+- Do not provision any live wallet during this task.
+- Do not broadcast blockchain transactions.
+- Do not change financial or escrow state-machine rules.
+- If an external configuration dependency cannot be verified from code, implement the safe code-side behaviour and report the remaining manual requirement.
+- If a genuine technical blocker makes one requirement unsafe to implement, do not invent a workaround. Complete the independent safe work, isolate the blocker and explain precisely what remains.
+
+# 11. REQUIRED FINAL IMPLEMENTATION REPORT
+
+When the complete implementation pass is finished, return one comprehensive report containing:
+
+### A. Executive summary
+What was implemented and whether the full Milestone 1 scope is complete.
+
+### B. Authentication changes
+Exact routes, files, functions and behaviour changed.
+
+### C. Embedded wallet provisioning changes
+Explain the new backend provisioning lifecycle, persistence, concurrency handling and ambiguous recovery.
+
+### D. Multi-wallet changes
+Explain the new data model, normalization, Freighter challenge/verification and agreement compatibility.
+
+### E. Session and identity-linking changes
+Explain logout reconciliation, API 401 handling, account switching and Privy account linking.
+
+### F. Exact changed-file list
+For every changed file, state what changed and why.
+
+### G. Test and build results
+Report actual results for:
+- Original test suite.
+- New tests.
+- Full test suite.
+- TypeScript.
+- Lint.
+- Production build.
+
+Include counts and actual failures, if any.
+
+### H. Backward compatibility
+Explain how existing users, wallets, agreements and sandbox sessions were preserved.
+
+### I. Remaining limitations and manual requirements
+Clearly identify anything that requires:
+- Privy Dashboard verification.
+- Staging/live environment verification.
+- External wallet testing.
+- A future milestone.
+
+### J. Deferred items
+Confirm that the explicitly deferred items were not implemented.
+
+### K. Final status
+For each requirement, mark it:
+- Implemented and tested.
+- Implemented but not yet verified in a live environment.
+- Partially implemented.
+- Blocked.
+- Deferred by design.
+
+Do not describe the milestone as complete if critical requirements remain unimplemented.
+
+**Proceed with the coordinated Milestone 1 implementation now.**

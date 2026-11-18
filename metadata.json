@@ -1,6 +1,6 @@
 {
   "name": "TrustFlow",
-  "description": "AI-assisted universal escrow and conditional payments application on Stellar using Soroban smart contracts.",
+  "description": "AI-assisted conditional-payment agreement workspace on Stellar Testnet, preparing verified terms and wallets for future escrow integration.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

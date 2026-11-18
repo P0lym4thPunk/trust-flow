@@ -79,11 +79,13 @@ Optimistic concurrency is enforced via `expectedVersion` (if provided) and repos
 
 ---
 
-## 5. Persistence & Test Isolation
+## 5. Persistence, Concurrency & Deployment Boundaries
 
 - `FileAgreementRepository` and `FileAuthRepository` accept an explicit `dataDir` path (default `process.env.DATA_DIR || path.resolve(process.cwd(), ".data")`).
-- All writes go through an in-process per-file promise queue + atomic temp-file write + rename (`fs.writeFileSync` + `fs.renameSync`) to prevent partial writes and race corruption.
-- Automated tests instantiate repositories and Express apps against `fs.mkdtempSync(path.join(os.tmpdir(), "trustflow-test-"))` and clean up after execution — guaranteeing `.data/agreements.json` is never polluted by test runs.
+- All per-file writes go through a process-local promise queue + atomic temp-file write + rename (`fs.writeFileSync` + `fs.renameSync`) to prevent partial writes.
+- Cross-store critical sections (such as external wallet SEP-53 challenge verification + global uniqueness linking, and wallet unlink vs. agreement creation) are serialized in-process via `KeyedOperationLock` (`backend/src/repositories/operationLock.ts`).
+- **Single-process constraint:** TrustFlow currently supports strictly **one Node.js process/instance** with a persistent `DATA_DIR` volume. Multiple replicas or Node cluster workers must not share `.data/*.json` files; horizontal scaling requires a later migration to a transactional database. See `docs/DEPLOYMENT_AND_WALLETS.md` for full operational constraints and the external Stellar wallet capability matrix.
+- Automated tests instantiate repositories and Express apps against `fs.mkdtempSync(path.join(os.tmpdir(), "trustflow-test-"))` and clean up after execution — guaranteeing `.data/*.json` is never polluted by test runs.
 
 ---
 

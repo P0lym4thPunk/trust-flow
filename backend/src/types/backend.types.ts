@@ -98,6 +98,26 @@ export interface AgreementRecord {
 
 export type AuthProvider = "email_otp" | "google" | "privy" | "dev_sandbox";
 export type WalletCustody = "none" | "privy_embedded" | "external_wallet" | "dev_sandbox";
+export type WalletRecordStatus = "active" | "unlinked";
+export type WalletVerificationMethod =
+  | "privy_embedded"
+  | "sep53"
+  | "dev_sandbox"
+  | "legacy_unverified";
+
+export interface UserWalletRecord {
+  id: string;
+  address: string;
+  custody: WalletCustody;
+  provider: string;
+  privyWalletId?: string | null;
+  verificationMethod: WalletVerificationMethod;
+  verifiedAt: string;
+  linkedAt: string;
+  unlinkedAt?: string | null;
+  status: WalletRecordStatus;
+  isPrimary: boolean;
+}
 
 export interface UserRecord {
   id: string;
@@ -109,9 +129,43 @@ export interface UserRecord {
   providerSubject?: string;
   stellarAddress: string | null;
   walletCustody: WalletCustody;
+  wallets?: UserWalletRecord[];
+  primaryWalletAddress?: string | null;
   isSandbox: boolean;
   createdAt: string;
   lastLoginAt: string;
+}
+
+export type ProvisioningStatus = "pending" | "ambiguous" | "completed" | "failed";
+
+export interface ProvisioningRecord {
+  privySub: string;
+  status: ProvisioningStatus;
+  idempotencyKey: string;
+  idempotencyCreatedAt: string;
+  externalId: string;
+  walletId?: string | null;
+  stellarAddress?: string | null;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  lastAttemptAt?: string | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+}
+
+export interface WalletChallengeRecord {
+  id: string;
+  userId: string;
+  address: string;
+  provider: string;
+  network: "testnet";
+  domain: string;
+  nonce: string;
+  message: string;
+  createdAt: string;
+  expiresAt: string;
+  consumedAt?: string | null;
 }
 
 export interface SessionRecord {

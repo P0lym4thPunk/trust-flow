@@ -15,6 +15,9 @@ export function createAuthRoutes(authService: AuthService) {
   router.post("/privy-sync", controller.privySync);
   router.post("/sandbox", controller.sandboxLogin);
   router.post("/wallet/link", requireAuth, controller.linkWallet);
+  router.post("/wallets/external/challenge", requireAuth, controller.createExternalWalletChallenge);
+  router.post("/wallets/external/verify", requireAuth, controller.verifyExternalWalletChallenge);
+  router.delete("/wallets/:walletId", requireAuth, controller.unlinkExternalWallet);
   router.get("/me", controller.me);
   router.post("/logout", controller.logout);
 

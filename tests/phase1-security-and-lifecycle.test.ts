@@ -1099,11 +1099,11 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
       activeClosers.push(srv.close);
 
       const token = issuePrivyToken(keys.appId, "did:privy:edge-cases", keys.privPem);
-      const runSync = async (stellarAddress?: string) =>
+      const runSync = async (stellarAddress?: string, disableAutoProvision = true) =>
         fetch(`${srv.baseUrl}/api/auth/privy-sync`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accessToken: token, stellarAddress }),
+          body: JSON.stringify({ accessToken: token, stellarAddress, disableAutoProvision }),
         });
 
       // D1: No wallets at all
@@ -2007,11 +2007,15 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
       const wrappedRepo: AuthRepository = {
         findUserById: (id) => realRepo.findUserById(id),
         findUserByEmail: (email) => realRepo.findUserByEmail(email),
+        findUserByProviderAndEmail: (provider, email) =>
+          realRepo.findUserByProviderAndEmail(provider, email),
         findUserByProviderSubject: (provider, subject) =>
           realRepo.findUserByProviderSubject(provider, subject),
         findUserByWalletAddress: (address) => realRepo.findUserByWalletAddress(address),
         saveUser: (user) => realRepo.saveUser(user),
         upsertPrivyUser: (params) => realRepo.upsertPrivyUser(params),
+        linkExternalWalletToUser: (params) => realRepo.linkExternalWalletToUser(params),
+        unlinkExternalWalletFromUser: (params) => realRepo.unlinkExternalWalletFromUser(params),
         saveSession: async (session) => {
           if (failNextSessionSave) {
             failNextSessionSave = false;
@@ -2024,6 +2028,12 @@ describe("TrustFlow Phase 1 Security, Auth, Lifecycle & AI Acceptance Suite", ()
         saveOtp: (email, record) => realRepo.saveOtp(email, record),
         findOtp: (email) => realRepo.findOtp(email),
         deleteOtp: (email) => realRepo.deleteOtp(email),
+        getProvisioningRecord: (privySub) => realRepo.getProvisioningRecord(privySub),
+        updateProvisioningRecord: (privySub, updater) =>
+          realRepo.updateProvisioningRecord(privySub, updater),
+        saveWalletChallenge: (challenge) => realRepo.saveWalletChallenge(challenge),
+        findWalletChallenge: (challengeId) => realRepo.findWalletChallenge(challengeId),
+        consumeWalletChallenge: (params) => realRepo.consumeWalletChallenge(params),
       };
 
       const cfg = getRuntimeConfig({ dataDir: tempDir, allowDevSandbox: true });

@@ -10,7 +10,19 @@ import {
   TransactionType,
   UserRecord,
 } from "../types/backend.types.js";
+import {
+  AuthRepository,
+  getActiveUserWalletAddresses,
+  getHistoricalUserWalletAddresses,
+} from "../repositories/auth.repository.js";
+import { KeyedOperationLock } from "../repositories/operationLock.js";
 import { computeCanonicalHash } from "./hash.service.js";
+
+const TERMINAL_AGREEMENT_STATUSES = new Set<AgreementStatus>([
+  "RELEASED",
+  "REFUNDED",
+  "CANCELLED",
+]);
 
 const VALID_TRANSACTION_TYPES = new Set<TransactionType>([
   "WORK",
@@ -90,12 +102,22 @@ function validateTerms(terms: AgreementTerms): void {
 }
 
 export class AgreementService {
-  constructor(private readonly repo: AgreementRepository) {}
+  private readonly operationLock: KeyedOperationLock;
+
+  constructor(
+    private readonly repo: AgreementRepository,
+    private readonly authRepo?: AuthRepository,
+    operationLock?: KeyedOperationLock
+  ) {
+    this.operationLock = operationLock || new KeyedOperationLock();
+  }
 
   private getUserIdentities(user: UserRecord): string[] {
-    const ids = [user.id];
-    if (user.stellarAddress) ids.push(user.stellarAddress);
-    return ids;
+    return Array.from(new Set([user.id, ...getActiveUserWalletAddresses(user)]));
+  }
+
+  private getUserHistoricalIdentities(user: UserRecord): string[] {
+    return Array.from(new Set([user.id, ...getHistoricalUserWalletAddresses(user)]));
   }
 
   private userMatchesAddress(user: UserRecord, partyAddress: string): boolean {
@@ -103,9 +125,12 @@ export class AgreementService {
   }
 
   private assertParticipant(user: UserRecord, agreement: AgreementRecord): void {
-    const isPayer = this.userMatchesAddress(user, agreement.terms.payer);
-    const isRecipient = this.userMatchesAddress(user, agreement.terms.recipient);
-    const isApprover = this.userMatchesAddress(user, agreement.terms.approver);
+    const identities = TERMINAL_AGREEMENT_STATUSES.has(agreement.status)
+      ? this.getUserHistoricalIdentities(user)
+      : this.getUserIdentities(user);
+    const isPayer = identities.includes(agreement.terms.payer);
+    const isRecipient = identities.includes(agreement.terms.recipient);
+    const isApprover = identities.includes(agreement.terms.approver);
     if (!isPayer && !isRecipient && !isApprover) {
       throw new AppError(
         403,
@@ -139,13 +164,18 @@ export class AgreementService {
 
   public async listForUser(user: UserRecord): Promise<AgreementRecord[]> {
     const all = await this.repo.findAll();
-    const identities = new Set(this.getUserIdentities(user));
-    return all.filter(
-      (agr) =>
+    const activeIdentities = new Set(this.getUserIdentities(user));
+    const historicalIdentities = new Set(this.getUserHistoricalIdentities(user));
+    return all.filter((agr) => {
+      const identities = TERMINAL_AGREEMENT_STATUSES.has(agr.status)
+        ? historicalIdentities
+        : activeIdentities;
+      return (
         identities.has(agr.terms.payer) ||
         identities.has(agr.terms.recipient) ||
         identities.has(agr.terms.approver)
-    );
+      );
+    });
   }
 
   public async getForUser(user: UserRecord, id: string): Promise<AgreementRecord> {
@@ -219,58 +249,64 @@ export class AgreementService {
 
     validateTerms(normalizedTerms);
 
-    // Caller must be either the payer or recipient (requiring a linked wallet or matching address)
-    const isPayer = this.userMatchesAddress(user, normalizedTerms.payer);
-    const isRecipient = this.userMatchesAddress(user, normalizedTerms.recipient);
-    if (!isPayer && !isRecipient) {
-      throw new AppError(
-        403,
-        "FORBIDDEN_CREATOR_NOT_PARTY",
-        "Authenticated user must match the agreement payer or recipient wallet address."
-      );
-    }
-
     const id = input.id && /^agr-[a-zA-Z0-9_-]{4,64}$/.test(input.id)
       ? input.id
       : `agr-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
 
     const initialStatus: AgreementStatus = input.status === "DRAFT" ? "DRAFT" : "CREATED";
     const canonicalHash = await computeCanonicalHash(normalizedTerms);
-    const nowIso = new Date().toISOString();
-    const actorAddr = user.stellarAddress || user.id;
 
-    const payerAccepted = initialStatus === "CREATED" && isPayer;
-    const recipientAccepted = initialStatus === "CREATED" && isRecipient && !isPayer;
+    return this.operationLock.withLock(`user:${user.id}`, async () => {
+      const freshUser = this.authRepo ? (await this.authRepo.findUserById(user.id)) ?? user : user;
 
-    const record: AgreementRecord = {
-      id,
-      transactionType,
-      title: normalizedTerms.title,
-      description: normalizedTerms.description,
-      terms: normalizedTerms,
-      canonicalHash,
-      version: 1,
-      status: initialStatus,
-      cancelRequest: "NONE",
-      payerAccepted,
-      recipientAccepted,
-      createdByUserId: user.id,
-      isSandbox: user.isSandbox,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      activity: [
-        this.makeActivity(
-          id,
-          actorAddr,
-          isPayer ? "PAYER" : "RECIPIENT",
-          "CREATED",
-          isPayer ? "Payment agreement created" : "Payment request created",
-          `Drafted for ${normalizedTerms.amount} ${normalizedTerms.asset}. Awaiting counterparty review.`
-        ),
-      ],
-    };
+      // Revalidate active wallet ownership under lock right before commit
+      const isPayer = this.userMatchesAddress(freshUser, normalizedTerms.payer);
+      const isRecipient = this.userMatchesAddress(freshUser, normalizedTerms.recipient);
+      if (!isPayer && !isRecipient) {
+        throw new AppError(
+          403,
+          "FORBIDDEN_CREATOR_NOT_PARTY",
+          "Authenticated user must match the agreement payer or recipient wallet address."
+        );
+      }
 
-    return this.repo.create(record);
+      const nowIso = new Date().toISOString();
+      const matchedAddr = isPayer ? normalizedTerms.payer : normalizedTerms.recipient;
+      const actorAddr = matchedAddr || freshUser.stellarAddress || freshUser.id;
+
+      const payerAccepted = initialStatus === "CREATED" && isPayer;
+      const recipientAccepted = initialStatus === "CREATED" && isRecipient && !isPayer;
+
+      const record: AgreementRecord = {
+        id,
+        transactionType,
+        title: normalizedTerms.title,
+        description: normalizedTerms.description,
+        terms: normalizedTerms,
+        canonicalHash,
+        version: 1,
+        status: initialStatus,
+        cancelRequest: "NONE",
+        payerAccepted,
+        recipientAccepted,
+        createdByUserId: freshUser.id,
+        isSandbox: freshUser.isSandbox,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        activity: [
+          this.makeActivity(
+            id,
+            actorAddr,
+            isPayer ? "PAYER" : "RECIPIENT",
+            "CREATED",
+            isPayer ? "Payment agreement created" : "Payment request created",
+            `Drafted for ${normalizedTerms.amount} ${normalizedTerms.asset}. Awaiting counterparty review.`
+          ),
+        ],
+      };
+
+      return this.repo.create(record);
+    });
   }
 
   public async acceptAgreement(

@@ -1,4 +1,5 @@
-import { validateStellarAddress } from "./config";
+import { FreighterAdapter } from "@pollar/core";
+import { STELLAR_TESTNET_CONFIG, validateStellarAddress } from "./config";
 
 export interface WalletAccount {
   id?: string;
@@ -11,7 +12,16 @@ export interface WalletAccount {
   balanceUSDC: string;
   isSimulated: boolean;
   isEmbedded?: boolean;
-  provider?: "google" | "email_otp" | "privy" | "freighter" | "simulated";
+  provider?: "google" | "email_otp" | "privy" | "freighter" | "simulated" | string;
+}
+
+export interface FreighterBridgeLike {
+  isAvailable(): Promise<boolean>;
+  connect(): Promise<{ address: string }>;
+  signStellarMessage(
+    message: string,
+    options?: { networkPassphrase?: string; accountToSign?: string }
+  ): Promise<{ signature: string; signerAddress?: string }>;
 }
 
 // 3 Standard Simulated Personas for End-to-End Testing
@@ -49,7 +59,7 @@ export interface WalletState {
   isConnected: boolean;
   isSimulated: boolean;
   currentAccount: WalletAccount;
-  walletName: string; // e.g. "Freighter" | "Albedo" | "Simulated Persona"
+  walletName: string;
 }
 
 export const DEFAULT_WALLET_STATE: WalletState = {
@@ -59,34 +69,68 @@ export const DEFAULT_WALLET_STATE: WalletState = {
   walletName: "Simulated Persona",
 };
 
+function resolveFreighterBridge(bridge?: FreighterBridgeLike): FreighterBridgeLike {
+  if (bridge) return bridge;
+  return new FreighterAdapter();
+}
+
 /**
- * Connect to authentic Freighter wallet if installed in browser
+ * Connect to authentic Freighter wallet via @pollar/core FreighterAdapter (@stellar/freighter-api)
  */
-export async function connectFreighterWallet(): Promise<WalletAccount | null> {
-  const freighter = (window as any)?.freighterApi;
-  if (!freighter) {
+export async function connectFreighterWallet(
+  bridge?: FreighterBridgeLike
+): Promise<WalletAccount> {
+  const freighter = resolveFreighterBridge(bridge);
+  const available = await freighter.isAvailable().catch(() => false);
+  if (!available) {
     throw new Error(
-      "Freighter wallet extension was not detected. Please install Freighter from https://www.freighter.app or use Simulated Persona Mode."
+      "Freighter wallet extension was not detected. Please install or unlock Freighter from https://www.freighter.app."
     );
   }
 
-  const isConnected = await freighter.isConnected();
-  if (!isConnected) {
-    await freighter.requestAccess();
-  }
-
-  const publicKey = await freighter.getPublicKey();
-  if (!publicKey || !validateStellarAddress(publicKey)) {
-    throw new Error("Failed to retrieve valid Stellar public key from Freighter.");
+  const { address } = await freighter.connect();
+  if (!address || !validateStellarAddress(address)) {
+    throw new Error("Failed to retrieve a valid Stellar public key from Freighter.");
   }
 
   return {
-    address: publicKey,
-    displayName: `Freighter (${publicKey.slice(0, 4)}...${publicKey.slice(-4)})`,
+    address,
+    displayName: `Freighter (${address.slice(0, 4)}...${address.slice(-4)})`,
     role: "PAYER",
     avatar: "🚀",
     balanceXLM: "Querying...",
     balanceUSDC: "Querying...",
     isSimulated: false,
+    provider: "freighter",
+  };
+}
+
+/**
+ * Signs a server-issued SEP-53 challenge message using Freighter's signMessage API.
+ */
+export async function signFreighterSep53Challenge(params: {
+  address: string;
+  message: string;
+  bridge?: FreighterBridgeLike;
+}): Promise<{ signature: string; signerAddress?: string }> {
+  const freighter = resolveFreighterBridge(params.bridge);
+  const result = await freighter.signStellarMessage(params.message, {
+    networkPassphrase: STELLAR_TESTNET_CONFIG.networkPassphrase,
+    accountToSign: params.address,
+  });
+
+  if (!result?.signature || typeof result.signature !== "string") {
+    throw new Error("Freighter did not return a valid SEP-53 signature.");
+  }
+
+  if (result.signerAddress && result.signerAddress !== params.address) {
+    throw new Error(
+      "Freighter signed the challenge with a different Stellar account than selected."
+    );
+  }
+
+  return {
+    signature: result.signature,
+    signerAddress: result.signerAddress,
   };
 }

@@ -1,9 +1,11 @@
 import { StrKey } from "@stellar/stellar-sdk";
 
+const viteEnv = (import.meta as { env?: Record<string, string | undefined> }).env;
+
 export const STELLAR_TESTNET_CONFIG = {
-  network: (import.meta.env.VITE_STELLAR_NETWORK as string) || "testnet",
+  network: viteEnv?.VITE_STELLAR_NETWORK || "testnet",
   networkPassphrase: "Test SDF Network ; September 2015",
-  rpcUrl: (import.meta.env.VITE_STELLAR_RPC_URL as string) || "https://soroban-testnet.stellar.org",
+  rpcUrl: viteEnv?.VITE_STELLAR_RPC_URL || "https://soroban-testnet.stellar.org",
   horizonUrl: "https://horizon-testnet.stellar.org",
   friendbotUrl: "https://friendbot.stellar.org",
   domainSeparator: "trustflow.stellar.escrow.v1",

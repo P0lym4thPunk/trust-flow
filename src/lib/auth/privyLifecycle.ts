@@ -1,6 +1,17 @@
 import { StrKey } from "@stellar/stellar-sdk";
 import type { InteractiveAuthAdapter, ProviderAuthState } from "@pollar/core";
-import type { WalletAccount } from "../stellar/wallet";
+import {
+  connectFreighterWallet,
+  signFreighterSep53Challenge,
+  type FreighterBridgeLike,
+  type WalletAccount,
+} from "../stellar/wallet";
+import {
+  connectStellarWalletProvider,
+  signSep53MessageWithProvider,
+  type StellarWalletAdapter,
+  type StellarWalletProviderId,
+} from "../stellar/walletsKit";
 
 export type AuthLifecycleStage =
   | "initializing"
@@ -12,6 +23,20 @@ export type AuthLifecycleStage =
   | "authenticated"
   | "sync_failed";
 
+export interface UserWalletRecord {
+  id: string;
+  address: string;
+  custody: "none" | "privy_embedded" | "external_wallet" | "dev_sandbox";
+  provider: string;
+  privyWalletId?: string | null;
+  verificationMethod: "privy_embedded" | "sep53" | "dev_sandbox" | "legacy_unverified";
+  verifiedAt: string;
+  linkedAt: string;
+  unlinkedAt?: string | null;
+  status: "active" | "unlinked";
+  isPrimary: boolean;
+}
+
 export interface AuthenticatedUser {
   id: string;
   email: string | null;
@@ -22,6 +47,8 @@ export interface AuthenticatedUser {
   providerSubject?: string;
   stellarAddress: string | null;
   walletCustody: "none" | "privy_embedded" | "external_wallet" | "dev_sandbox";
+  wallets?: UserWalletRecord[];
+  primaryWalletAddress?: string | null;
   isSandbox: boolean;
   createdAt: string;
   lastLoginAt: string;
@@ -29,9 +56,11 @@ export interface AuthenticatedUser {
 
 export interface AuthenticatedWallet {
   address: string | null;
+  primaryWalletAddress?: string | null;
   network: "testnet";
   custody: AuthenticatedUser["walletCustody"];
   isEmbedded: boolean;
+  wallets?: UserWalletRecord[];
   balanceXLM: string;
   balanceUSDC: string;
 }
@@ -41,6 +70,7 @@ export interface AuthCapabilities {
   googleConfigured: boolean;
   privyConfigured: boolean;
   devSandboxEnabled: boolean;
+  legacyAuthDisabled?: boolean;
 }
 
 export interface AuthSyncError {
@@ -84,10 +114,8 @@ export interface AuthStorageLike {
 export interface PrivyRuntimeActions {
   getAccessToken?: () => Promise<string | null>;
   refreshUser?: () => Promise<PrivyUserLike | null | undefined>;
-  createWallet?: (input: { chainType: "stellar" }) => Promise<{
-    user?: PrivyUserLike | null;
-    wallet?: PrivyLinkedWalletLike | null;
-  }>;
+  linkEmail?: () => void | Promise<void>;
+  linkGoogle?: () => void | Promise<void>;
   logout?: () => Promise<void>;
   adapter?: Pick<
     InteractiveAuthAdapter,
@@ -105,6 +133,8 @@ export interface AuthControllerState {
   syncError: AuthSyncError | null;
   activePrivySub: string | null;
   retrievedPrivyWalletAddress: string | null;
+  privyLinkingBusy: boolean;
+  privyLinkingError: string | null;
   // TEMPORARY PHASE 2.2A TEST GUARD
   autoWalletProvisionDisabled: boolean;
 }
@@ -117,7 +147,7 @@ export interface AuthControllerOptions {
   apiBaseUrl?: string;
   hydrationWaitMs?: number;
   hydrationPollMs?: number;
-  // TEMPORARY PHASE 2.2A TEST GUARD: Disables automatic client-side Stellar wallet creation in dev only
+  // TEMPORARY PHASE 2.2A TEST GUARD: Disables automatic Stellar wallet creation in dev only
   disableAutoWalletProvision?: boolean;
   isProduction?: boolean;
 }
@@ -128,12 +158,21 @@ export type EmbeddedWalletLookupResult =
   | { status: "multiple"; addresses: string[] }
   | { status: "invalid"; reason: string };
 
+export interface ExternalWalletChallengeResult {
+  challengeId: string;
+  address: string;
+  provider: string;
+  domain: string;
+  network: string;
+  expiresAt: string;
+  message: string;
+}
+
 export const AUTH_TOKEN_STORAGE_KEY = "trustflow_auth_token";
 
-const DEFAULT_HYDRATION_WAIT_MS = 1200;
-const DEFAULT_HYDRATION_POLL_MS = 40;
+const DEFAULT_HYDRATION_WAIT_MS = 300;
+const DEFAULT_HYDRATION_POLL_MS = 25;
 
-// TEMPORARY PHASE 2.2A TEST GUARD: Ensures test-mode wallet-provision disablement cannot run in production
 function isRuntimeProduction(explicitFlag?: boolean): boolean {
   if (explicitFlag !== undefined) return explicitFlag;
   const viteProd =
@@ -252,27 +291,6 @@ export function extractEmbeddedStellarWallet(
   return { status: "found", address: eligibleAddresses[0] };
 }
 
-function validateCreatedWalletRecord(
-  wallet: PrivyLinkedWalletLike | null | undefined
-): string | null {
-  if (!wallet) return null;
-  const chainType = readChainType(wallet);
-  if (chainType !== undefined && chainType !== "stellar") {
-    return null;
-  }
-  const walletClientType = readWalletClientType(wallet);
-  if (walletClientType !== undefined && walletClientType !== "privy") {
-    return null;
-  }
-  const connectorType = readConnectorType(wallet);
-  if (connectorType !== undefined && connectorType !== "embedded") {
-    return null;
-  }
-  if (typeof wallet.address !== "string") return null;
-  const address = wallet.address.trim();
-  return isValidStellarPublicKey(address) ? address : null;
-}
-
 function createBrowserStorage(): AuthStorageLike | null {
   if (typeof window === "undefined") return null;
   try {
@@ -389,8 +407,43 @@ function mapSyncFailure(
   };
 }
 
+function formatPrivyLinkingError(err: unknown): string | null {
+  const raw =
+    typeof err === "string"
+      ? err
+      : err instanceof Error
+      ? err.message
+      : typeof err === "object" && err !== null && "message" in err
+      ? String((err as { message: unknown }).message)
+      : String(err || "");
+  const normalized = raw.toLowerCase();
+
+  if (
+    normalized.includes("exited") ||
+    normalized.includes("cancel") ||
+    normalized.includes("closed") ||
+    normalized.includes("aborted")
+  ) {
+    return "Linking was cancelled. Your existing TrustFlow account and wallet remain intact.";
+  }
+
+  if (
+    normalized.includes("already") &&
+    (normalized.includes("linked") || normalized.includes("exists") || normalized.includes("conflict"))
+  ) {
+    return "This email or Google identity is already linked to a different Privy account and cannot be merged.";
+  }
+
+  if (!raw.trim()) {
+    return "Could not link that login method right now. Your existing account remains intact.";
+  }
+
+  return raw.replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]");
+}
+
 export class TrustFlowAuthController {
   private readonly isPrivyConfigured: boolean;
+  private readonly isProduction: boolean;
   private readonly fetchFn: typeof fetch;
   private readonly storage: AuthStorageLike | null;
   private readonly apiBaseUrl: string;
@@ -411,6 +464,7 @@ export class TrustFlowAuthController {
   private sessionEpoch = 0;
   private syncEpoch = 0;
   private wasPrivyAuthenticated = false;
+  private hasAttempted401Resync = false;
 
   private inFlightSync: {
     epoch: number;
@@ -418,9 +472,14 @@ export class TrustFlowAuthController {
     promise: Promise<void>;
   } | null = null;
 
+  private inFlight401Recovery: {
+    epoch: number;
+    tokenSnapshot: string | null;
+    promise: Promise<boolean>;
+  } | null = null;
+
+  private recoveredTokenTransitions = new Map<string, string>();
   private resolvedWalletBySub = new Map<string, string>();
-  private walletProvisionAttemptedSubs = new Set<string>();
-  private inFlightWalletProvisionBySub = new Map<string, Promise<string | null>>();
 
   // TEMPORARY PHASE 2.2A TEST GUARD
   private readonly autoWalletProvisionDisabled: boolean;
@@ -429,13 +488,14 @@ export class TrustFlowAuthController {
 
   constructor(options: AuthControllerOptions) {
     this.isPrivyConfigured = options.isPrivyConfigured;
+    this.isProduction = isRuntimeProduction(options.isProduction);
     this.fetchFn = options.fetchFn || globalThis.fetch.bind(globalThis);
     this.storage = options.storage !== undefined ? options.storage : createBrowserStorage();
     this.apiBaseUrl = (options.apiBaseUrl || "").replace(/\/+$/, "");
     this.hydrationWaitMs = options.hydrationWaitMs ?? DEFAULT_HYDRATION_WAIT_MS;
     this.hydrationPollMs = options.hydrationPollMs ?? DEFAULT_HYDRATION_POLL_MS;
     this.autoWalletProvisionDisabled =
-      !isRuntimeProduction(options.isProduction) && Boolean(options.disableAutoWalletProvision);
+      !this.isProduction && Boolean(options.disableAutoWalletProvision);
 
     this.state = {
       stage: "initializing",
@@ -445,13 +505,16 @@ export class TrustFlowAuthController {
         emailOtpConfigured: false,
         googleConfigured: false,
         privyConfigured: options.isPrivyConfigured,
-        devSandboxEnabled: options.defaultDevSandboxEnabled ?? false,
+        devSandboxEnabled: this.isProduction ? false : options.defaultDevSandboxEnabled ?? false,
+        legacyAuthDisabled: this.isProduction,
       },
       isLoading: true,
       isAuthenticated: false,
       syncError: null,
       activePrivySub: null,
       retrievedPrivyWalletAddress: null,
+      privyLinkingBusy: false,
+      privyLinkingError: null,
       autoWalletProvisionDisabled: this.autoWalletProvisionDisabled,
     };
   }
@@ -519,10 +582,7 @@ export class TrustFlowAuthController {
   }
 
   public setRuntimeActions(actions: PrivyRuntimeActions): void {
-    // TEMPORARY PHASE 2.2A TEST GUARD: Never retain createWallet when test guard is active
-    this.runtimeActions = this.autoWalletProvisionDisabled
-      ? { ...actions, createWallet: undefined }
-      : actions;
+    this.runtimeActions = actions;
   }
 
   public isAutoWalletProvisionDisabled(): boolean {
@@ -551,7 +611,6 @@ export class TrustFlowAuthController {
   }
 
   public handleAdapterAuthSignal(providerState: ProviderAuthState): void {
-    // Only wake hydration waiters; authoritative user metadata & readiness come from Privy snapshot
     if (providerState.authenticated) {
       this.notifyHydrationWaiters();
     }
@@ -562,9 +621,10 @@ export class TrustFlowAuthController {
     this.syncEpoch += 1;
     this.sessionEpoch += 1;
     this.inFlightSync = null;
+    this.inFlight401Recovery = null;
+    this.hasAttempted401Resync = false;
+    this.recoveredTokenTransitions.clear();
     this.resolvedWalletBySub.clear();
-    this.walletProvisionAttemptedSubs.clear();
-    this.inFlightWalletProvisionBySub.clear();
     this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
     this.setState({
       user: null,
@@ -572,8 +632,40 @@ export class TrustFlowAuthController {
       syncError: null,
       activePrivySub: nextSub,
       retrievedPrivyWalletAddress: null,
+      privyLinkingBusy: false,
+      privyLinkingError: null,
       stage: nextSub ? "privy_authenticated" : "unauthenticated",
     });
+  }
+
+  private invalidateStalePrivySession(tokenToRevoke?: string | null): void {
+    this.syncEpoch += 1;
+    this.sessionEpoch += 1;
+    this.inFlightSync = null;
+    this.inFlight401Recovery = null;
+    this.wasPrivyAuthenticated = false;
+    this.hasAttempted401Resync = false;
+    this.recoveredTokenTransitions.clear();
+    this.resolvedWalletBySub.clear();
+    this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
+
+    this.setState({
+      user: null,
+      wallet: null,
+      syncError: null,
+      activePrivySub: null,
+      retrievedPrivyWalletAddress: null,
+      privyLinkingBusy: false,
+      privyLinkingError: null,
+      stage: "unauthenticated",
+    });
+
+    if (tokenToRevoke) {
+      void this.fetchFn(this.apiUrl("/api/auth/logout"), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tokenToRevoke}` },
+      }).catch(() => undefined);
+    }
   }
 
   public async initSession(): Promise<void> {
@@ -605,18 +697,29 @@ export class TrustFlowAuthController {
             wallet: AuthenticatedWallet | null;
           };
           if (data.user) {
-            // If Privy is already ready and reports a DIFFERENT user, never adopt stale User A session
             const currentPrivySub = this.privySnapshot.user?.id ?? null;
-            if (
+            const privyConfirmsLoggedOut =
+              this.isPrivyConfigured &&
+              this.privySnapshot.ready &&
+              !this.privySnapshot.authenticated &&
+              data.user.provider === "privy";
+            const privyMismatch =
               this.isPrivyConfigured &&
               this.privySnapshot.ready &&
               this.privySnapshot.authenticated &&
               data.user.provider === "privy" &&
-              currentPrivySub &&
-              data.user.providerSubject !== currentPrivySub
-            ) {
+              Boolean(currentPrivySub) &&
+              data.user.providerSubject !== currentPrivySub;
+            const invalidProdSandbox = this.isProduction && data.user.isSandbox;
+
+            if (privyConfirmsLoggedOut || privyMismatch || invalidProdSandbox) {
               this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
+              void this.fetchFn(this.apiUrl("/api/auth/logout"), {
+                method: "POST",
+                headers: { Authorization: `Bearer ${storedToken}` },
+              }).catch(() => undefined);
             } else {
+              this.hasAttempted401Resync = false;
               this.setState({
                 user: data.user,
                 wallet: data.wallet,
@@ -627,11 +730,11 @@ export class TrustFlowAuthController {
           } else {
             this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
           }
-        } else {
+        } else if (res.status === 401) {
           this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
         }
       } catch {
-        // Network error during restore keeps existing token intact until user/Privy reconciles
+        // Network error during restore preserves existing token until connectivity/Privy settles
       }
     }
 
@@ -669,32 +772,31 @@ export class TrustFlowAuthController {
     }
 
     if (!privy.authenticated) {
+      // If Privy is ready and confirmed unauthenticated, NEVER keep a restored Privy TrustFlow session alive
+      // across reload even if wasPrivyAuthenticated was false before this page load.
+      if (this.state.user?.provider === "privy") {
+        const staleToken = this.storage?.getItem(AUTH_TOKEN_STORAGE_KEY);
+        this.invalidateStalePrivySession(staleToken);
+        return;
+      }
+
       if (this.wasPrivyAuthenticated) {
         this.wasPrivyAuthenticated = false;
-        if (this.state.user?.provider === "privy" || !this.state.user) {
+        if (!this.state.user) {
           this.syncEpoch += 1;
           this.inFlightSync = null;
           this.resolvedWalletBySub.clear();
-          this.walletProvisionAttemptedSubs.clear();
-          this.inFlightWalletProvisionBySub.clear();
-          if (this.state.user?.provider === "privy") {
-            this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
-          }
           this.setState({
-            user: this.state.user?.provider === "privy" ? null : this.state.user,
-            wallet: this.state.user?.provider === "privy" ? null : this.state.wallet,
             syncError: null,
             activePrivySub: null,
             retrievedPrivyWalletAddress: null,
-            stage:
-              this.state.user && this.state.user.provider !== "privy"
-                ? "authenticated"
-                : "unauthenticated",
+            stage: "unauthenticated",
           });
         }
         return;
       }
 
+      // Preserve legitimate non-Privy dev sandbox sessions even when Privy is unauthenticated
       if (this.state.user) {
         if (this.state.stage !== "authenticated") {
           this.setState({ stage: "authenticated", syncError: null });
@@ -749,17 +851,14 @@ export class TrustFlowAuthController {
       }
     }
 
-    void this.syncPrivySession({
-      allowWalletProvision: !this.autoWalletProvisionDisabled,
-    }).catch(() => {
+    void this.syncPrivySession().catch(() => {
       // Recoverable failure state is already reflected on AuthControllerState.syncError
     });
   }
 
-  private async resolveEmbeddedStellarWallet(
-    epoch: number,
-    options: { allowWalletProvision: boolean; isRetry: boolean }
-  ): Promise<{ sub: string; address: string }> {
+  private async waitForPrivyIdentity(
+    epoch: number
+  ): Promise<{ sub: string; clientWalletAddress: string | undefined }> {
     const deadline = Date.now() + this.hydrationWaitMs;
     let didCallRefreshUser = false;
 
@@ -784,183 +883,167 @@ export class TrustFlowAuthController {
 
       const currentUser = snap.user;
       if (currentUser?.id) {
-        this.setState({ activePrivySub: currentUser.id });
+        const sub = currentUser.id;
+        this.setState({ activePrivySub: sub });
 
-        const cachedWallet = this.resolvedWalletBySub.get(currentUser.id);
+        const cachedWallet = this.resolvedWalletBySub.get(sub);
         const lookup = extractEmbeddedStellarWallet(currentUser);
 
         if (lookup.status === "found") {
-          this.resolvedWalletBySub.set(currentUser.id, lookup.address);
-          return { sub: currentUser.id, address: lookup.address };
+          this.resolvedWalletBySub.set(sub, lookup.address);
+          return { sub, clientWalletAddress: lookup.address };
         }
         if (lookup.status === "multiple") {
-          throw mapSyncFailure(409, "MULTIPLE_EMBEDDED_STELLAR_WALLETS", undefined, currentUser.id);
+          throw mapSyncFailure(409, "MULTIPLE_EMBEDDED_STELLAR_WALLETS", undefined, sub);
         }
         if (lookup.status === "invalid") {
-          throw mapSyncFailure(400, "INVALID_PRIVY_WALLET", lookup.reason, currentUser.id);
+          throw mapSyncFailure(400, "INVALID_PRIVY_WALLET", lookup.reason, sub);
         }
-
         if (cachedWallet && isValidStellarPublicKey(cachedWallet)) {
-          return { sub: currentUser.id, address: cachedWallet };
+          return { sub, clientWalletAddress: cachedWallet };
         }
-      }
 
-      // Ask Privy SDK to refresh user linkedAccounts once before waiting or provisioning
-      if (!didCallRefreshUser && this.runtimeActions.refreshUser) {
-        didCallRefreshUser = true;
-        try {
-          const refreshed = await this.runtimeActions.refreshUser();
-          if (epoch !== this.syncEpoch) {
-            throw new Error("Authentication state changed.");
+        // Wait briefly for SDK hydration or perform one refreshUser check before delegating to backend
+        if (!didCallRefreshUser && this.runtimeActions.refreshUser) {
+          didCallRefreshUser = true;
+          try {
+            const refreshed = await this.runtimeActions.refreshUser();
+            if (epoch !== this.syncEpoch) {
+              throw new Error("Authentication state changed.");
+            }
+            if (refreshed?.id === sub) {
+              this.privySnapshot = { ...this.privySnapshot, user: refreshed };
+              const refreshedLookup = extractEmbeddedStellarWallet(refreshed);
+              if (refreshedLookup.status === "found") {
+                this.resolvedWalletBySub.set(sub, refreshedLookup.address);
+                return { sub, clientWalletAddress: refreshedLookup.address };
+              }
+              if (refreshedLookup.status === "multiple") {
+                throw mapSyncFailure(409, "MULTIPLE_EMBEDDED_STELLAR_WALLETS", undefined, sub);
+              }
+              if (refreshedLookup.status === "invalid") {
+                throw mapSyncFailure(400, "INVALID_PRIVY_WALLET", refreshedLookup.reason, sub);
+              }
+            }
+          } catch (err) {
+            if (isAuthSyncError(err)) throw err;
           }
-          if (refreshed?.id) {
-            this.privySnapshot = { ...this.privySnapshot, user: refreshed };
-            this.setState({ activePrivySub: refreshed.id });
-            const refreshedLookup = extractEmbeddedStellarWallet(refreshed);
-            if (refreshedLookup.status === "found") {
-              this.resolvedWalletBySub.set(refreshed.id, refreshedLookup.address);
-              return { sub: refreshed.id, address: refreshedLookup.address };
-            }
-            if (refreshedLookup.status === "multiple") {
-              throw mapSyncFailure(
-                409,
-                "MULTIPLE_EMBEDDED_STELLAR_WALLETS",
-                undefined,
-                refreshed.id
-              );
-            }
-            if (refreshedLookup.status === "invalid") {
-              throw mapSyncFailure(400, "INVALID_PRIVY_WALLET", refreshedLookup.reason, refreshed.id);
-            }
+        }
+
+        if (Date.now() >= deadline || !this.runtimeActions.refreshUser) {
+          // Dev-only Phase 2.2A guard: never auto-provision when test mode intentionally disables it
+          if (this.autoWalletProvisionDisabled) {
+            throw mapSyncFailure(
+              403,
+              "NO_EMBEDDED_STELLAR_WALLET",
+              "Privy Wallet Test Mode is active: automatic Stellar wallet creation was skipped. Your Privy identity is authenticated with no embedded Stellar wallet.",
+              sub
+            );
           }
-        } catch (err) {
-          if (isAuthSyncError(err)) throw err;
-          // Ignore transient refreshUser failure and continue polling snapshot until deadline
+          // Under normal production/dev mode, backend coordinates provisioning idempotently
+          return { sub, clientWalletAddress: undefined };
         }
       }
 
       if (Date.now() >= deadline) {
-        break;
+        throw mapSyncFailure(
+          null,
+          "PRIVY_USER_NOT_HYDRATED",
+          "Privy user details did not finish loading in time. Please retry synchronization.",
+          this.privySnapshot.user?.id ?? null
+        );
       }
       await this.waitForHydrationTick(this.hydrationPollMs);
     }
+  }
 
-    if (epoch !== this.syncEpoch) {
-      throw new Error("Authentication state changed.");
+  private async executeBackendPrivySync(params: {
+    accessToken: string;
+    stellarAddress?: string;
+    expectedSub: string | null;
+    epoch: number;
+    isRetry?: boolean;
+  }): Promise<void> {
+    const { accessToken, stellarAddress, expectedSub, epoch, isRetry = false } = params;
+    const subForError = expectedSub ?? this.privySnapshot.user?.id ?? null;
+
+    this.setState({ stage: "backend_syncing" });
+
+    const payload: Record<string, unknown> = { accessToken };
+    if (stellarAddress) {
+      payload.stellarAddress = stellarAddress;
     }
-
-    const settledUser = this.privySnapshot.user;
-    const sub = settledUser?.id ?? null;
-
-    if (!sub) {
-      throw mapSyncFailure(
-        null,
-        "PRIVY_USER_NOT_HYDRATED",
-        "Privy user details did not finish loading in time. Please retry synchronization.",
-        null
-      );
-    }
-
-    // Re-check final snapshot
-    const finalCheck = extractEmbeddedStellarWallet(settledUser);
-    if (finalCheck.status === "found") {
-      this.resolvedWalletBySub.set(sub, finalCheck.address);
-      return { sub, address: finalCheck.address };
-    }
-    if (finalCheck.status === "multiple") {
-      throw mapSyncFailure(409, "MULTIPLE_EMBEDDED_STELLAR_WALLETS", undefined, sub);
-    }
-    if (finalCheck.status === "invalid") {
-      throw mapSyncFailure(400, "INVALID_PRIVY_WALLET", finalCheck.reason, sub);
-    }
-
-    // Provision embedded Stellar wallet at most once when allowed and no wallet exists
-    const alreadyProvisioned = this.walletProvisionAttemptedSubs.has(sub);
-    if (
-      options.allowWalletProvision &&
-      !this.autoWalletProvisionDisabled &&
-      this.runtimeActions.createWallet &&
-      !alreadyProvisioned &&
-      !this.resolvedWalletBySub.has(sub)
-    ) {
-
-      let provisionPromise = this.inFlightWalletProvisionBySub.get(sub);
-      if (!provisionPromise) {
-        this.walletProvisionAttemptedSubs.add(sub);
-        provisionPromise = (async () => {
-          try {
-            const created = await this.runtimeActions.createWallet!({ chainType: "stellar" });
-            if (created.user?.id === sub) {
-              this.privySnapshot = { ...this.privySnapshot, user: created.user };
-              const fromUser = extractEmbeddedStellarWallet(created.user);
-              if (fromUser.status === "found") {
-                return fromUser.address;
-              }
-            }
-            const directAddr = validateCreatedWalletRecord(created.wallet);
-            if (directAddr) {
-              return directAddr;
-            }
-            if (this.runtimeActions.refreshUser) {
-              const refreshedAfterCreate = await this.runtimeActions.refreshUser();
-              if (refreshedAfterCreate?.id === sub) {
-                this.privySnapshot = { ...this.privySnapshot, user: refreshedAfterCreate };
-                const afterCreateLookup = extractEmbeddedStellarWallet(refreshedAfterCreate);
-                if (afterCreateLookup.status === "found") {
-                  return afterCreateLookup.address;
-                }
-              }
-            }
-            return null;
-          } catch {
-            // If wallet was concurrently created, check refreshUser before failing
-            if (this.runtimeActions.refreshUser) {
-              try {
-                const refreshed = await this.runtimeActions.refreshUser();
-                if (refreshed?.id === sub) {
-                  this.privySnapshot = { ...this.privySnapshot, user: refreshed };
-                  const lookupAfterErr = extractEmbeddedStellarWallet(refreshed);
-                  if (lookupAfterErr.status === "found") {
-                    return lookupAfterErr.address;
-                  }
-                }
-              } catch {
-                // Fall through
-              }
-            }
-            return null;
-          } finally {
-            this.inFlightWalletProvisionBySub.delete(sub);
-          }
-        })();
-        this.inFlightWalletProvisionBySub.set(sub, provisionPromise);
-      }
-
-      const provisionedAddress = await provisionPromise;
-      if (epoch !== this.syncEpoch) {
-        throw new Error("Authentication state changed.");
-      }
-      if (provisionedAddress && isValidStellarPublicKey(provisionedAddress)) {
-        this.resolvedWalletBySub.set(sub, provisionedAddress);
-        return { sub, address: provisionedAddress };
-      }
-    }
-
-    console.warn("[TrustFlow Auth] Authenticated Privy user has no eligible embedded Stellar wallet.", {
-      privySubSuffix: sub.slice(-6),
-      sawExternalStellarWallet: finalCheck.sawExternalStellarWallet,
-      autoWalletProvisionDisabled: this.autoWalletProvisionDisabled,
-    });
     if (this.autoWalletProvisionDisabled) {
-      // TEMPORARY PHASE 2.2A TEST GUARD: Preserve Privy identity while blocking auto wallet creation
-      throw mapSyncFailure(
-        403,
-        "NO_EMBEDDED_STELLAR_WALLET",
-        "Privy Wallet Test Mode is active: automatic Stellar wallet creation was skipped. Your Privy identity is authenticated with no embedded Stellar wallet.",
-        sub
-      );
+      payload.disableAutoProvision = true;
     }
-    throw mapSyncFailure(403, "NO_EMBEDDED_STELLAR_WALLET", undefined, sub);
+
+    let res: Response;
+    try {
+      res = await this.fetchFn(this.apiUrl("/api/auth/privy-sync"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      throw mapSyncFailure(null, "NETWORK_ERROR", undefined, subForError);
+    }
+
+    if (epoch !== this.syncEpoch) return;
+
+    let result: any = {};
+    try {
+      result = await res.json();
+    } catch {
+      result = {};
+    }
+
+    if (!res.ok) {
+      throw mapSyncFailure(res.status, result.code, result.error, subForError);
+    }
+
+    // Verify user did not switch while backend request was in flight
+    const postSub = this.privySnapshot.user?.id ?? null;
+    const resolvedSub = result.user?.providerSubject ?? expectedSub ?? postSub;
+    if (
+      epoch !== this.syncEpoch ||
+      (expectedSub && postSub && postSub !== expectedSub) ||
+      (postSub && resolvedSub && resolvedSub !== postSub)
+    ) {
+      return;
+    }
+
+    const resolvedAddr: string | null = result.user?.stellarAddress || stellarAddress || null;
+    if (resolvedSub && resolvedAddr && isValidStellarPublicKey(resolvedAddr)) {
+      this.resolvedWalletBySub.set(resolvedSub, resolvedAddr);
+    }
+
+    // Normal (non-401-recovery) sync always unlocks future 401 recoveries cleanly;
+    // 401-recovery unlocks hasAttempted401Resync only once the retried request succeeds.
+    if (!isRetry) {
+      this.hasAttempted401Resync = false;
+      this.recoveredTokenTransitions.clear();
+    }
+
+    this.storage?.setItem(AUTH_TOKEN_STORAGE_KEY, result.token);
+    this.setState({
+      stage: "authenticated",
+      user: result.user,
+      wallet: result.wallet,
+      syncError: null,
+      activePrivySub: resolvedSub ?? null,
+      retrievedPrivyWalletAddress: resolvedAddr,
+    });
+
+    // Best-effort client SDK refresh so embedded signing discovers newly server-provisioned wallets.
+    if (this.runtimeActions.refreshUser && !isRetry && resolvedSub) {
+      void Promise.resolve(this.runtimeActions.refreshUser())
+        .then((refreshed) => {
+          if (epoch === this.syncEpoch && refreshed?.id === resolvedSub) {
+            this.privySnapshot = { ...this.privySnapshot, user: refreshed ?? null };
+          }
+        })
+        .catch(() => undefined);
+    }
   }
 
   public syncPrivySession(options: {
@@ -980,7 +1063,6 @@ export class TrustFlowAuthController {
       }
     }
 
-    // Already authenticated for this exact Privy user (non-retry)
     if (
       !options.isRetry &&
       this.state.stage === "authenticated" &&
@@ -992,9 +1074,6 @@ export class TrustFlowAuthController {
     }
 
     const epoch = this.syncEpoch;
-    // TEMPORARY PHASE 2.2A TEST GUARD: Authoritative block against automatic wallet provisioning
-    const allowWalletProvision =
-      (options.allowWalletProvision ?? true) && !this.autoWalletProvisionDisabled;
     const isRetry = options.isRetry ?? false;
 
     const entry: { epoch: number; sub: string | null; promise: Promise<void> } = {
@@ -1011,14 +1090,10 @@ export class TrustFlowAuthController {
           activePrivySub: currentSub,
         });
 
-        const { sub, address } = await this.resolveEmbeddedStellarWallet(epoch, {
-          allowWalletProvision,
-          isRetry,
-        });
+        const { sub, clientWalletAddress } = await this.waitForPrivyIdentity(epoch);
 
         if (epoch !== this.syncEpoch) return;
 
-        // Re-verify wallet belongs to currently active Privy user
         const latestSub = this.privySnapshot.user?.id ?? sub;
         if (latestSub !== sub) {
           throw new Error("Privy user changed during synchronization.");
@@ -1028,11 +1103,13 @@ export class TrustFlowAuthController {
           this.inFlightSync.sub = sub;
         }
 
-        this.setState({
-          stage: "wallet_ready",
-          activePrivySub: sub,
-          retrievedPrivyWalletAddress: address,
-        });
+        if (clientWalletAddress) {
+          this.setState({
+            stage: "wallet_ready",
+            activePrivySub: sub,
+            retrievedPrivyWalletAddress: clientWalletAddress,
+          });
+        }
 
         const accessToken = this.runtimeActions.getAccessToken
           ? await this.runtimeActions.getAccessToken()
@@ -1049,49 +1126,12 @@ export class TrustFlowAuthController {
           );
         }
 
-        this.setState({ stage: "backend_syncing" });
-
-        let res: Response;
-        try {
-          res = await this.fetchFn(this.apiUrl("/api/auth/privy-sync"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accessToken,
-              stellarAddress: address,
-            }),
-          });
-        } catch {
-          throw mapSyncFailure(null, "NETWORK_ERROR", undefined, sub);
-        }
-
-        if (epoch !== this.syncEpoch) return;
-
-        let result: any = {};
-        try {
-          result = await res.json();
-        } catch {
-          result = {};
-        }
-
-        if (!res.ok) {
-          throw mapSyncFailure(res.status, result.code, result.error, sub);
-        }
-
-        // Verify user did not switch while backend request was in flight
-        const postSub = this.privySnapshot.user?.id ?? sub;
-        if (epoch !== this.syncEpoch || postSub !== sub) {
-          return;
-        }
-
-        this.storage?.setItem(AUTH_TOKEN_STORAGE_KEY, result.token);
-        this.setState({
-          stage: "authenticated",
-          user: result.user,
-          wallet: result.wallet,
-          syncError: null,
-          activePrivySub: sub,
-          retrievedPrivyWalletAddress: result.user?.stellarAddress || address,
+        await this.executeBackendPrivySync({
+          accessToken,
+          stellarAddress: clientWalletAddress,
+          expectedSub: sub,
+          epoch,
+          isRetry,
         });
       } catch (err) {
         if (epoch !== this.syncEpoch) {
@@ -1127,7 +1167,6 @@ export class TrustFlowAuthController {
 
   public async retryPrivySync(): Promise<void> {
     await this.syncPrivySession({
-      allowWalletProvision: false,
       isRetry: true,
     });
   }
@@ -1136,33 +1175,262 @@ export class TrustFlowAuthController {
     accessToken: string;
     stellarAddress?: string;
   }): Promise<void> {
-    const res = await this.fetchFn(this.apiUrl("/api/auth/privy-sync"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accessToken: data.accessToken,
-        ...(data.stellarAddress ? { stellarAddress: data.stellarAddress } : {}),
-      }),
-    });
-    const result = (await res.json()) as any;
-    if (!res.ok) {
-      throw new Error(result.error || "Failed to verify Privy authentication.");
+    const currentSub = this.privySnapshot.user?.id ?? null;
+
+    if (
+      this.inFlightSync &&
+      this.inFlightSync.epoch === this.syncEpoch &&
+      (this.inFlightSync.sub === null ||
+        currentSub === null ||
+        this.inFlightSync.sub === currentSub)
+    ) {
+      await this.inFlightSync.promise;
+      return;
     }
-    this.storage?.setItem(AUTH_TOKEN_STORAGE_KEY, result.token);
+
+    const epoch = this.syncEpoch;
+    const expectedSub = currentSub;
+
+    const entry: { epoch: number; sub: string | null; promise: Promise<void> } = {
+      epoch,
+      sub: expectedSub,
+      promise: Promise.resolve(),
+    };
+
+    const promise = (async () => {
+      try {
+        await this.executeBackendPrivySync({
+          accessToken: data.accessToken,
+          stellarAddress: data.stellarAddress,
+          expectedSub,
+          epoch,
+          isRetry: false,
+        });
+      } catch (err) {
+        if (epoch !== this.syncEpoch) {
+          return;
+        }
+        const syncErr: AuthSyncError = isAuthSyncError(err)
+          ? err
+          : mapSyncFailure(
+              null,
+              "SYNC_FAILED",
+              err instanceof Error ? err.message : "Failed to verify Privy authentication.",
+              this.privySnapshot.user?.id ?? expectedSub
+            );
+
+        this.setState({
+          stage: "sync_failed",
+          user: null,
+          wallet: null,
+          syncError: syncErr,
+        });
+        throw new Error(syncErr.message);
+      }
+    })();
+
+    entry.promise = promise;
+    this.inFlightSync = entry;
+    try {
+      await promise;
+    } finally {
+      if (this.inFlightSync === entry) {
+        this.inFlightSync = null;
+      }
+      if (
+        this.privySnapshot.ready &&
+        this.privySnapshot.authenticated &&
+        this.state.stage !== "sync_failed" &&
+        (!this.state.isAuthenticated ||
+          (this.privySnapshot.user?.id &&
+            this.state.user?.providerSubject !== this.privySnapshot.user.id))
+      ) {
+        this.reconcileAuthState();
+      }
+    }
+  }
+
+  private clearAuthOn401(expectedSessionEpoch: number): void {
+    if (expectedSessionEpoch !== this.sessionEpoch) {
+      return;
+    }
+    this.hasAttempted401Resync = false;
+    this.inFlight401Recovery = null;
+    this.recoveredTokenTransitions.clear();
+    this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
     this.setState({
-      stage: "authenticated",
-      user: result.user,
-      wallet: result.wallet,
+      stage: "unauthenticated",
+      user: null,
+      wallet: null,
       syncError: null,
-      activePrivySub: result.user?.providerSubject ?? null,
-      retrievedPrivyWalletAddress: result.user?.stellarAddress ?? null,
+      activePrivySub: null,
+      retrievedPrivyWalletAddress: null,
     });
+  }
+
+  private async runCoalesced401Recovery(
+    expectedSessionEpoch: number,
+    tokenSnapshot: string | null
+  ): Promise<boolean> {
+    if (expectedSessionEpoch !== this.sessionEpoch) {
+      return false;
+    }
+
+    if (
+      this.inFlight401Recovery &&
+      this.inFlight401Recovery.epoch === expectedSessionEpoch &&
+      this.inFlight401Recovery.tokenSnapshot === tokenSnapshot
+    ) {
+      return this.inFlight401Recovery.promise;
+    }
+
+    const canResyncViaPrivy =
+      this.isPrivyConfigured &&
+      this.privySnapshot.ready &&
+      this.privySnapshot.authenticated &&
+      this.state.user?.provider === "privy" &&
+      !this.hasAttempted401Resync;
+
+    if (!canResyncViaPrivy) {
+      return false;
+    }
+
+    this.hasAttempted401Resync = true;
+
+    const entry = {
+      epoch: expectedSessionEpoch,
+      tokenSnapshot,
+      promise: (async () => {
+        try {
+          if (tokenSnapshot) {
+            this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
+          }
+          await this.syncPrivySession({ isRetry: true });
+          if (expectedSessionEpoch !== this.sessionEpoch) {
+            return false;
+          }
+          const freshToken = this.storage?.getItem(AUTH_TOKEN_STORAGE_KEY) ?? null;
+          if (!freshToken || freshToken === tokenSnapshot) {
+            return false;
+          }
+          if (tokenSnapshot) {
+            this.recoveredTokenTransitions.set(tokenSnapshot, freshToken);
+          }
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
+    };
+
+    this.inFlight401Recovery = entry;
+    try {
+      return await entry.promise;
+    } finally {
+      if (this.inFlight401Recovery === entry) {
+        this.inFlight401Recovery = null;
+      }
+    }
+  }
+
+  /**
+   * Shared authenticated fetch helper:
+   * - Attaches current TrustFlow Bearer token.
+   * - Handles genuine 401 session rejections consistently without logging out on 403/5xx/network errors.
+   * - Coalesces concurrent 401 recoveries onto a single guarded Privy re-sync, permits future
+   *   independent 401 recovery cycles once a retry succeeds, and prevents infinite retry loops.
+   */
+  public async authenticatedFetch(
+    input: RequestInfo | URL,
+    init: RequestInit = {}
+  ): Promise<Response> {
+    const startSessionEpoch = this.sessionEpoch;
+    const tokenSnapshot = this.storage?.getItem(AUTH_TOKEN_STORAGE_KEY) ?? null;
+    const headers = new Headers(init.headers || {});
+    if (tokenSnapshot && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${tokenSnapshot}`);
+    }
+
+    const res = await this.fetchFn(input, { ...init, headers });
+    if (res.status !== 401) {
+      if (startSessionEpoch === this.sessionEpoch && tokenSnapshot) {
+        this.hasAttempted401Resync = false;
+      }
+      return res;
+    }
+
+    // Ignore stale 401 responses belonging to a switched/logged-out account
+    if (startSessionEpoch !== this.sessionEpoch) {
+      return res;
+    }
+
+    const currentToken = this.storage?.getItem(AUTH_TOKEN_STORAGE_KEY) ?? null;
+
+    // If another concurrent request already upgraded tokenSnapshot -> currentToken in this same epoch,
+    // retry once directly using currentToken without issuing a duplicate privy-sync.
+    const transitionedToken =
+      tokenSnapshot && this.recoveredTokenTransitions.get(tokenSnapshot);
+    if (transitionedToken && currentToken === transitionedToken) {
+      const retryHeaders = new Headers(init.headers || {});
+      retryHeaders.set("Authorization", `Bearer ${currentToken}`);
+      const retryRes = await this.fetchFn(input, { ...init, headers: retryHeaders });
+      if (startSessionEpoch !== this.sessionEpoch) {
+        return retryRes;
+      }
+      if (retryRes.status !== 401) {
+        this.hasAttempted401Resync = false;
+        return retryRes;
+      }
+      this.clearAuthOn401(startSessionEpoch);
+      return retryRes;
+    }
+
+    // Otherwise if token was changed externally without transition map, treat original 401 as stale
+    if (tokenSnapshot !== currentToken && !this.inFlight401Recovery) {
+      return res;
+    }
+
+    const recovered = await this.runCoalesced401Recovery(startSessionEpoch, tokenSnapshot);
+    if (startSessionEpoch !== this.sessionEpoch) {
+      return res;
+    }
+
+    if (recovered) {
+      const freshToken = this.storage?.getItem(AUTH_TOKEN_STORAGE_KEY) ?? null;
+      if (freshToken && freshToken !== tokenSnapshot) {
+        const retryHeaders = new Headers(init.headers || {});
+        retryHeaders.set("Authorization", `Bearer ${freshToken}`);
+        const retryRes = await this.fetchFn(input, { ...init, headers: retryHeaders });
+        if (startSessionEpoch !== this.sessionEpoch) {
+          return retryRes;
+        }
+        if (retryRes.status === 401) {
+          // Recovery retry still returned 401 — terminate cleanly with no further retries
+          this.clearAuthOn401(startSessionEpoch);
+          return retryRes;
+        }
+        // Retry succeeded — permit future independent 401 recovery cycles later in the session
+        this.hasAttempted401Resync = false;
+        return retryRes;
+      }
+    }
+
+    // If syncPrivySession entered recoverable sync_failed, preserve sync_failed UI rather than wiping syncError
+    if (this.state.stage === "sync_failed") {
+      return res;
+    }
+
+    this.clearAuthOn401(startSessionEpoch);
+    return res;
   }
 
   public async sendOtpCode(email: string): Promise<{ success: boolean; message: string }> {
     if (this.isPrivyConfigured && this.runtimeActions.adapter) {
       await this.runtimeActions.adapter.sendEmailCode(email);
       return { success: true, message: `Verification code sent via Privy to ${email}.` };
+    }
+    if (this.isProduction || this.state.capabilities.legacyAuthDisabled) {
+      throw new Error("Privy authentication is required in production and is not currently configured.");
     }
     const res = await this.fetchFn(this.apiUrl("/api/auth/otp/start"), {
       method: "POST",
@@ -1180,10 +1448,12 @@ export class TrustFlowAuthController {
     if (this.isPrivyConfigured && this.runtimeActions.adapter) {
       await this.runtimeActions.adapter.verifyEmailCode(code);
       this.wasPrivyAuthenticated = true;
-      await this.syncPrivySession({
-        allowWalletProvision: !this.autoWalletProvisionDisabled,
-      });
+      await this.syncPrivySession();
       return;
+    }
+
+    if (this.isProduction || this.state.capabilities.legacyAuthDisabled) {
+      throw new Error("Privy authentication is required in production and is not currently configured.");
     }
 
     const res = await this.fetchFn(this.apiUrl("/api/auth/otp/verify"), {
@@ -1196,6 +1466,7 @@ export class TrustFlowAuthController {
       throw new Error(data.error || "Failed to verify code.");
     }
 
+    this.hasAttempted401Resync = false;
     this.storage?.setItem(AUTH_TOKEN_STORAGE_KEY, data.token);
     this.setState({
       stage: "authenticated",
@@ -1209,10 +1480,12 @@ export class TrustFlowAuthController {
     if (this.isPrivyConfigured && this.runtimeActions.adapter) {
       await this.runtimeActions.adapter.loginWithOAuth("google");
       this.wasPrivyAuthenticated = true;
-      await this.syncPrivySession({
-        allowWalletProvision: !this.autoWalletProvisionDisabled,
-      });
+      await this.syncPrivySession();
       return;
+    }
+
+    if (this.isProduction || this.state.capabilities.legacyAuthDisabled) {
+      throw new Error("Privy authentication is required in production and is not currently configured.");
     }
 
     if (!idToken) {
@@ -1233,6 +1506,7 @@ export class TrustFlowAuthController {
       throw new Error(data.error || "Google verification failed.");
     }
 
+    this.hasAttempted401Resync = false;
     this.storage?.setItem(AUTH_TOKEN_STORAGE_KEY, data.token);
     this.setState({
       stage: "authenticated",
@@ -1253,6 +1527,7 @@ export class TrustFlowAuthController {
       throw new Error(data.error || "Development sandbox is unavailable.");
     }
 
+    this.hasAttempted401Resync = false;
     this.storage?.setItem(AUTH_TOKEN_STORAGE_KEY, data.token);
     this.setState({
       stage: "authenticated",
@@ -1262,35 +1537,257 @@ export class TrustFlowAuthController {
     });
   }
 
-  public async linkExternalWallet(stellarAddress: string): Promise<void> {
-    const res = await this.fetchFn(this.apiUrl("/api/auth/wallet/link"), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...this.getAuthHeaders(),
-      },
-      body: JSON.stringify({ stellarAddress }),
-    });
-    const data = (await res.json()) as any;
-    if (!res.ok) {
-      throw new Error(data.error || "Failed to link wallet.");
+  public async linkExternalWallet(_stellarAddress: string): Promise<never> {
+    throw new Error(
+      "Direct address-only wallet linking is retired. Connect an external Stellar wallet and sign the SEP-53 challenge."
+    );
+  }
+
+  public async requestExternalWalletChallenge(
+    address: string,
+    provider: string
+  ): Promise<ExternalWalletChallengeResult> {
+    if (!this.state.isAuthenticated || !this.state.user) {
+      throw new Error("Sign in before linking an external wallet.");
     }
+    if (this.state.user.isSandbox) {
+      throw new Error("Development sandbox personas have fixed test addresses.");
+    }
+
+    const challengeRes = await this.authenticatedFetch(
+      this.apiUrl("/api/auth/wallets/external/challenge"),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, provider }),
+      }
+    );
+    const challengeBody = (await challengeRes.json().catch(() => ({}))) as any;
+    if (!challengeRes.ok) {
+      throw new Error(
+        challengeBody.error || "Failed to create external wallet verification challenge."
+      );
+    }
+
+    return challengeBody as ExternalWalletChallengeResult;
+  }
+
+  public async completeExternalWalletVerification(params: {
+    challengeId: string;
+    address: string;
+    signature: string;
+  }): Promise<UserWalletRecord> {
+    if (!this.state.isAuthenticated || !this.state.user) {
+      throw new Error("Sign in before linking an external wallet.");
+    }
+
+    const verifyRes = await this.authenticatedFetch(
+      this.apiUrl("/api/auth/wallets/external/verify"),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      }
+    );
+    const verifyBody = (await verifyRes.json().catch(() => ({}))) as any;
+    if (!verifyRes.ok) {
+      throw new Error(verifyBody.error || "Failed to verify external wallet ownership.");
+    }
+
+    this.setState({
+      user: verifyBody.user,
+      wallet: verifyBody.wallet,
+    });
+
+    return verifyBody.linkedWallet as UserWalletRecord;
+  }
+
+  public async linkExternalWalletWithProvider(
+    providerId: StellarWalletProviderId,
+    adapter?: StellarWalletAdapter
+  ): Promise<UserWalletRecord> {
+    if (!this.state.isAuthenticated || !this.state.user) {
+      throw new Error("Sign in before linking an external wallet.");
+    }
+    if (this.state.user.isSandbox) {
+      throw new Error("Development sandbox personas have fixed test addresses.");
+    }
+
+    const connected = await connectStellarWalletProvider(providerId, adapter);
+    const challenge = await this.requestExternalWalletChallenge(
+      connected.address,
+      connected.providerId
+    );
+    const { signature } = await signSep53MessageWithProvider(
+      connected.providerId,
+      {
+        address: challenge.address,
+        message: challenge.message,
+      },
+      adapter
+    );
+
+    return this.completeExternalWalletVerification({
+      challengeId: challenge.challengeId,
+      address: challenge.address,
+      signature,
+    });
+  }
+
+  public async linkExternalWalletWithFreighter(
+    bridge?: FreighterBridgeLike
+  ): Promise<UserWalletRecord> {
+    if (!this.state.isAuthenticated || !this.state.user) {
+      throw new Error("Sign in before linking an external wallet.");
+    }
+    if (this.state.user.isSandbox) {
+      throw new Error("Development sandbox personas have fixed test addresses.");
+    }
+
+    const account = await connectFreighterWallet(bridge);
+    const challenge = await this.requestExternalWalletChallenge(account.address, "freighter");
+
+    const { signature } = await signFreighterSep53Challenge({
+      address: challenge.address || account.address,
+      message: challenge.message,
+      bridge,
+    });
+
+    return this.completeExternalWalletVerification({
+      challengeId: challenge.challengeId,
+      address: challenge.address || account.address,
+      signature,
+    });
+  }
+
+  public async unlinkExternalWallet(walletId: string): Promise<void> {
+    if (!this.state.isAuthenticated || !this.state.user) {
+      throw new Error("Sign in before modifying linked wallets.");
+    }
+
+    const res = await this.authenticatedFetch(
+      this.apiUrl(`/api/auth/wallets/${encodeURIComponent(walletId)}`),
+      { method: "DELETE" }
+    );
+    const data = (await res.json().catch(() => ({}))) as any;
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to unlink external wallet.");
+    }
+
     this.setState({
       user: data.user,
       wallet: data.wallet,
     });
   }
 
+  public async startPrivyEmailLink(): Promise<void> {
+    if (!this.isPrivyConfigured || this.state.user?.provider !== "privy") {
+      throw new Error("Privy authentication is required before linking another login method.");
+    }
+    if (!this.runtimeActions.linkEmail) {
+      throw new Error("Privy email linking is not available in the current client session.");
+    }
+    this.setState({ privyLinkingBusy: true, privyLinkingError: null });
+    try {
+      await Promise.resolve(this.runtimeActions.linkEmail());
+    } catch (err) {
+      this.handlePrivyLinkError(err);
+    }
+  }
+
+  public async startPrivyGoogleLink(): Promise<void> {
+    if (!this.isPrivyConfigured || this.state.user?.provider !== "privy") {
+      throw new Error("Privy authentication is required before linking another login method.");
+    }
+    if (!this.runtimeActions.linkGoogle) {
+      throw new Error("Privy Google linking is not available in the current client session.");
+    }
+    this.setState({ privyLinkingBusy: true, privyLinkingError: null });
+    try {
+      await Promise.resolve(this.runtimeActions.linkGoogle());
+    } catch (err) {
+      this.handlePrivyLinkError(err);
+    }
+  }
+
+  public async handlePrivyLinkSuccess(updatedPrivyUser?: PrivyUserLike | null): Promise<void> {
+    const activeSub = this.state.user?.providerSubject || this.privySnapshot.user?.id || null;
+    if (!activeSub) {
+      this.setState({ privyLinkingBusy: false });
+      return;
+    }
+
+    if (updatedPrivyUser?.id && updatedPrivyUser.id !== activeSub) {
+      this.setState({
+        privyLinkingBusy: false,
+        privyLinkingError:
+          "Linked identity returned a different Privy subject and was rejected to protect your account.",
+      });
+      return;
+    }
+
+    if (updatedPrivyUser?.id === activeSub) {
+      this.privySnapshot = { ...this.privySnapshot, user: updatedPrivyUser };
+    } else if (this.runtimeActions.refreshUser) {
+      try {
+        const refreshed = await this.runtimeActions.refreshUser();
+        if (refreshed?.id === activeSub) {
+          this.privySnapshot = { ...this.privySnapshot, user: refreshed };
+        }
+      } catch {
+        // Proceed with backend sync using existing token
+      }
+    }
+
+    try {
+      await this.syncPrivySession({ isRetry: true });
+      this.setState({ privyLinkingBusy: false, privyLinkingError: null });
+    } catch (err) {
+      this.setState({
+        privyLinkingBusy: false,
+        privyLinkingError:
+          err instanceof Error
+            ? err.message
+            : "Account linked in Privy, but profile synchronization could not complete.",
+      });
+    }
+  }
+
+  public handlePrivyLinkError(error: unknown): void {
+    this.setState({
+      privyLinkingBusy: false,
+      privyLinkingError: formatPrivyLinkingError(error),
+    });
+  }
+
+  public handlePrivyLinkCancelled(): void {
+    if (!this.state.privyLinkingBusy) return;
+    this.setState({
+      privyLinkingBusy: false,
+      privyLinkingError:
+        "Linking was cancelled. Your existing TrustFlow account and wallet remain intact.",
+    });
+  }
+
+  public clearPrivyLinkError(): void {
+    this.setState({ privyLinkingError: null });
+  }
+
   public async refreshBalance(): Promise<void> {
     const storedToken = this.storage?.getItem(AUTH_TOKEN_STORAGE_KEY);
     if (!storedToken) return;
-    const res = await this.fetchFn(this.apiUrl("/api/auth/me"), {
-      headers: { Authorization: `Bearer ${storedToken}` },
-    });
+    const expectedUserId = this.state.user?.id ?? null;
+    const res = await this.authenticatedFetch(this.apiUrl("/api/auth/me"));
     if (res.ok) {
-      const data = (await res.json()) as { wallet?: AuthenticatedWallet | null };
-      if (data.wallet) {
-        this.setState({ wallet: data.wallet });
+      const data = (await res.json()) as {
+        user?: AuthenticatedUser | null;
+        wallet?: AuthenticatedWallet | null;
+      };
+      if (data.wallet && (!expectedUserId || this.state.user?.id === expectedUserId)) {
+        this.setState({
+          wallet: data.wallet,
+          ...(data.user ? { user: data.user } : {}),
+        });
       }
     }
   }
@@ -1299,10 +1796,11 @@ export class TrustFlowAuthController {
     this.syncEpoch += 1;
     this.sessionEpoch += 1;
     this.inFlightSync = null;
+    this.inFlight401Recovery = null;
     this.wasPrivyAuthenticated = false;
+    this.hasAttempted401Resync = false;
+    this.recoveredTokenTransitions.clear();
     this.resolvedWalletBySub.clear();
-    this.walletProvisionAttemptedSubs.clear();
-    this.inFlightWalletProvisionBySub.clear();
 
     const storedToken = this.storage?.getItem(AUTH_TOKEN_STORAGE_KEY);
     this.storage?.removeItem(AUTH_TOKEN_STORAGE_KEY);
@@ -1314,6 +1812,8 @@ export class TrustFlowAuthController {
       syncError: null,
       activePrivySub: null,
       retrievedPrivyWalletAddress: null,
+      privyLinkingBusy: false,
+      privyLinkingError: null,
     });
 
     if (this.isPrivyConfigured) {
@@ -1363,7 +1863,7 @@ export class TrustFlowAuthController {
     return {
       id: user.id,
       email: user.email || undefined,
-      address: user.stellarAddress || "",
+      address: user.primaryWalletAddress || user.stellarAddress || "",
       displayName: user.displayName,
       role: "PAYER",
       avatar: user.avatar,

@@ -16,8 +16,11 @@ import {
   type AuthLifecycleStage,
   type AuthSyncError,
   type AuthControllerState,
+  type ExternalWalletChallengeResult,
   type PrivyUserLike,
+  type UserWalletRecord,
 } from "./privyLifecycle";
+import type { StellarWalletAdapter, StellarWalletProviderId } from "../stellar/walletsKit";
 
 export type {
   AuthenticatedUser,
@@ -26,7 +29,14 @@ export type {
   AuthLifecycleStage,
   AuthSyncError,
   PrivyUserLike,
+  UserWalletRecord,
 };
+
+export interface PrivyLinkBridgeHandlers {
+  onLinkSuccess: (user?: PrivyUserLike | null) => Promise<void>;
+  onLinkError: (error: unknown) => void;
+  onLinkCancel?: () => void;
+}
 
 export interface PrivyRuntimeInput {
   ready: boolean;
@@ -34,13 +44,16 @@ export interface PrivyRuntimeInput {
   user: PrivyUserLike | null;
   getAccessToken?: () => Promise<string | null>;
   refreshUser?: () => Promise<PrivyUserLike | null | undefined>;
-  createWallet?: (input: { chainType: "stellar" }) => Promise<any>;
+  linkEmail?: () => void | Promise<void>;
+  linkGoogle?: () => void | Promise<void>;
   logout?: () => Promise<void>;
+  linkBridgeRef?: React.MutableRefObject<PrivyLinkBridgeHandlers | null>;
 }
 
 interface AuthContextType {
   user: AuthenticatedUser | null;
   wallet: AuthenticatedWallet | null;
+  privyUser: PrivyUserLike | null;
   capabilities: AuthCapabilities;
   authStage: AuthLifecycleStage;
   syncError: AuthSyncError | null;
@@ -51,6 +64,7 @@ interface AuthContextType {
   openAuthModal: () => void;
   closeAuthModal: () => void;
   getAuthHeaders: () => Record<string, string>;
+  authenticatedFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   sendOtpCode: (email: string) => Promise<{ success: boolean; message: string }>;
   verifyOtpCode: (email: string, code: string) => Promise<void>;
   loginWithGoogle: (idToken?: string) => Promise<void>;
@@ -64,6 +78,27 @@ interface AuthContextType {
   enterSandbox: (personaKey?: "alice" | "bob" | "charlie") => Promise<void>;
   switchSandboxPersona: (account: WalletAccount) => Promise<void>;
   linkExternalWallet: (stellarAddress: string) => Promise<void>;
+  linkExternalWalletWithFreighter: () => Promise<UserWalletRecord>;
+  requestExternalWalletChallenge: (
+    address: string,
+    provider: string
+  ) => Promise<ExternalWalletChallengeResult>;
+  completeExternalWalletVerification: (params: {
+    challengeId: string;
+    address: string;
+    signature: string;
+  }) => Promise<UserWalletRecord>;
+  linkExternalWalletWithProvider: (
+    providerId: StellarWalletProviderId,
+    adapter?: StellarWalletAdapter
+  ) => Promise<UserWalletRecord>;
+  unlinkExternalWallet: (walletId: string) => Promise<void>;
+  linkPrivyEmail: () => Promise<void>;
+  linkPrivyGoogle: () => Promise<void>;
+  cancelPrivyLink: () => void;
+  privyLinkingBusy: boolean;
+  privyLinkingError: string | null;
+  clearPrivyLinkError: () => void;
   logout: () => Promise<void>;
   refreshBalance: () => Promise<void>;
   isDemoSandbox: boolean;
@@ -74,9 +109,11 @@ interface AuthContextType {
   isPrivyWalletTestMode: boolean;
 }
 
-// TEMPORARY PHASE 2.2A TEST GUARD: Dev-only opt-in to skip automatic client-side Stellar wallet creation
+const viteEnv = (import.meta as { env?: { PROD?: boolean; VITE_PRIVY_WALLET_TEST_MODE?: string; VITE_ALLOW_DEV_SANDBOX?: string } }).env;
+
+// TEMPORARY PHASE 2.2A TEST GUARD: Dev-only opt-in to skip automatic Stellar wallet creation
 export const IS_PRIVY_WALLET_TEST_MODE =
-  !import.meta.env.PROD && import.meta.env.VITE_PRIVY_WALLET_TEST_MODE === "true";
+  !viteEnv?.PROD && viteEnv?.VITE_PRIVY_WALLET_TEST_MODE === "true";
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -96,16 +133,19 @@ export const AuthProvider: React.FC<{
   children: React.ReactNode;
   getPrivyAccessToken?: () => Promise<string | null>;
   privyRuntime?: PrivyRuntimeInput;
-}> = ({ children, getPrivyAccessToken, privyRuntime }) => {
+  isPrivyConfiguredOverride?: boolean;
+  fetchFn?: typeof fetch;
+}> = ({ children, getPrivyAccessToken, privyRuntime, isPrivyConfiguredOverride, fetchFn }) => {
+  const effectiveIsPrivyConfigured = isPrivyConfiguredOverride ?? IS_PRIVY_CONFIGURED;
   const controllerRef = useRef<TrustFlowAuthController | null>(null);
   if (!controllerRef.current) {
     controllerRef.current = new TrustFlowAuthController({
-      isPrivyConfigured: IS_PRIVY_CONFIGURED,
+      isPrivyConfigured: effectiveIsPrivyConfigured,
       defaultDevSandboxEnabled:
-        import.meta.env.VITE_ALLOW_DEV_SANDBOX !== "false" && !import.meta.env.PROD,
-      // TEMPORARY PHASE 2.2A TEST GUARD
+        viteEnv?.VITE_ALLOW_DEV_SANDBOX !== "false" && !viteEnv?.PROD,
       disableAutoWalletProvision: IS_PRIVY_WALLET_TEST_MODE,
-      isProduction: import.meta.env.PROD,
+      isProduction: Boolean(viteEnv?.PROD),
+      fetchFn,
     });
   }
   const controller = controllerRef.current;
@@ -118,6 +158,21 @@ export const AuthProvider: React.FC<{
     privyRuntime,
   });
   runtimeRef.current = { getPrivyAccessToken, privyRuntime };
+
+  // Wire Privy link callbacks ref so outer PrivyAuthWrapper useLinkAccount notifies this controller
+  useEffect(() => {
+    if (!privyRuntime?.linkBridgeRef) return;
+    privyRuntime.linkBridgeRef.current = {
+      onLinkSuccess: (linkedUser) => controller.handlePrivyLinkSuccess(linkedUser),
+      onLinkError: (error) => controller.handlePrivyLinkError(error),
+      onLinkCancel: () => controller.handlePrivyLinkCancelled(),
+    };
+    return () => {
+      if (privyRuntime.linkBridgeRef) {
+        privyRuntime.linkBridgeRef.current = null;
+      }
+    };
+  }, [controller, privyRuntime?.linkBridgeRef]);
 
   // Keep latest Privy SDK actions wired without tearing down the controller
   useEffect(() => {
@@ -132,10 +187,12 @@ export const AuthProvider: React.FC<{
       refreshUser: runtimeRef.current.privyRuntime?.refreshUser
         ? () => runtimeRef.current.privyRuntime!.refreshUser!()
         : undefined,
-      createWallet:
-        !IS_PRIVY_WALLET_TEST_MODE && runtimeRef.current.privyRuntime?.createWallet
-          ? (input) => runtimeRef.current.privyRuntime!.createWallet!(input)
-          : undefined,
+      linkEmail: runtimeRef.current.privyRuntime?.linkEmail
+        ? () => runtimeRef.current.privyRuntime!.linkEmail!()
+        : undefined,
+      linkGoogle: runtimeRef.current.privyRuntime?.linkGoogle
+        ? () => runtimeRef.current.privyRuntime!.linkGoogle!()
+        : undefined,
       logout: runtimeRef.current.privyRuntime?.logout
         ? () => runtimeRef.current.privyRuntime!.logout!()
         : undefined,
@@ -145,7 +202,8 @@ export const AuthProvider: React.FC<{
     getPrivyAccessToken,
     privyRuntime?.getAccessToken,
     privyRuntime?.refreshUser,
-    privyRuntime?.createWallet,
+    privyRuntime?.linkEmail,
+    privyRuntime?.linkGoogle,
     privyRuntime?.logout,
   ]);
 
@@ -171,7 +229,7 @@ export const AuthProvider: React.FC<{
 
   // Forward reactive Privy readiness, auth status, and user linkedAccounts snapshots
   useEffect(() => {
-    if (!IS_PRIVY_CONFIGURED || !privyRuntime) return;
+    if (!effectiveIsPrivyConfigured || !privyRuntime) return;
     controller.updatePrivySnapshot({
       ready: privyRuntime.ready,
       authenticated: privyRuntime.authenticated,
@@ -179,6 +237,7 @@ export const AuthProvider: React.FC<{
     });
   }, [
     controller,
+    effectiveIsPrivyConfigured,
     privyRuntime?.ready,
     privyRuntime?.authenticated,
     privyRuntime?.user,
@@ -195,6 +254,13 @@ export const AuthProvider: React.FC<{
   const getAuthHeaders = useCallback((): Record<string, string> => {
     return controller.getAuthHeaders();
   }, [controller]);
+
+  const authenticatedFetch = useCallback(
+    (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      return controller.authenticatedFetch(input, init);
+    },
+    [controller]
+  );
 
   const refreshBalance = useCallback(async () => {
     await controller.refreshBalance();
@@ -266,6 +332,54 @@ export const AuthProvider: React.FC<{
     [controller]
   );
 
+  const linkExternalWalletWithFreighter = useCallback(async () => {
+    return controller.linkExternalWalletWithFreighter();
+  }, [controller]);
+
+  const requestExternalWalletChallenge = useCallback(
+    async (address: string, provider: string) => {
+      return controller.requestExternalWalletChallenge(address, provider);
+    },
+    [controller]
+  );
+
+  const completeExternalWalletVerification = useCallback(
+    async (params: { challengeId: string; address: string; signature: string }) => {
+      return controller.completeExternalWalletVerification(params);
+    },
+    [controller]
+  );
+
+  const linkExternalWalletWithProvider = useCallback(
+    async (providerId: StellarWalletProviderId, adapter?: StellarWalletAdapter) => {
+      return controller.linkExternalWalletWithProvider(providerId, adapter);
+    },
+    [controller]
+  );
+
+  const unlinkExternalWallet = useCallback(
+    async (walletId: string) => {
+      await controller.unlinkExternalWallet(walletId);
+    },
+    [controller]
+  );
+
+  const linkPrivyEmail = useCallback(async () => {
+    await controller.startPrivyEmailLink();
+  }, [controller]);
+
+  const linkPrivyGoogle = useCallback(async () => {
+    await controller.startPrivyGoogleLink();
+  }, [controller]);
+
+  const cancelPrivyLink = useCallback(() => {
+    controller.handlePrivyLinkCancelled();
+  }, [controller]);
+
+  const clearPrivyLinkError = useCallback(() => {
+    controller.clearPrivyLinkError();
+  }, [controller]);
+
   const logout = useCallback(async () => {
     await controller.logout();
   }, [controller]);
@@ -281,16 +395,18 @@ export const AuthProvider: React.FC<{
       value={{
         user,
         wallet,
+        privyUser: privyRuntime?.user ?? null,
         capabilities: authState.capabilities,
         authStage: authState.stage,
         syncError: authState.syncError,
         isLoading: authState.isLoading,
         isAuthenticated: authState.isAuthenticated,
-        isPrivyConfigured: IS_PRIVY_CONFIGURED,
+        isPrivyConfigured: effectiveIsPrivyConfigured,
         isAuthModalOpen,
         openAuthModal: () => setIsAuthModalOpen(true),
         closeAuthModal: () => setIsAuthModalOpen(false),
         getAuthHeaders,
+        authenticatedFetch,
         sendOtpCode,
         verifyOtpCode,
         loginWithGoogle,
@@ -299,6 +415,17 @@ export const AuthProvider: React.FC<{
         enterSandbox,
         switchSandboxPersona,
         linkExternalWallet,
+        linkExternalWalletWithFreighter,
+        requestExternalWalletChallenge,
+        completeExternalWalletVerification,
+        linkExternalWalletWithProvider,
+        unlinkExternalWallet,
+        linkPrivyEmail,
+        linkPrivyGoogle,
+        cancelPrivyLink,
+        privyLinkingBusy: authState.privyLinkingBusy,
+        privyLinkingError: authState.privyLinkingError,
+        clearPrivyLinkError,
         logout,
         refreshBalance,
         isDemoSandbox,

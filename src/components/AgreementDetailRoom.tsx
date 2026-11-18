@@ -19,16 +19,18 @@ import {
 import { AgreementRecord } from "../types/agreement";
 import { formatAddress } from "../lib/stellar/config";
 import { WalletAccount } from "../lib/stellar/wallet";
+import { formatStellarProviderName } from "../lib/stellar/walletsKit";
 import {
   getAgreementVisualStatus,
   getToneClasses,
   isSimulatedHash,
 } from "../lib/agreementStatus";
-import { useAuth } from "../lib/auth/AuthContext";
+import { useAuth, type UserWalletRecord } from "../lib/auth/AuthContext";
 
 interface AgreementDetailRoomProps {
   agreement: AgreementRecord;
   currentAccount: WalletAccount;
+  userWallets?: UserWalletRecord[];
   onUpdateAgreement: (updated: AgreementRecord) => void;
   onBack: () => void;
 }
@@ -36,11 +38,13 @@ interface AgreementDetailRoomProps {
 export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
   agreement,
   currentAccount,
+  userWallets,
   onUpdateAgreement,
   onBack,
 }) => {
   const shouldReduceMotion = useReducedMotion();
-  const { getAuthHeaders } = useAuth();
+  const { authenticatedFetch, user } = useAuth();
+  const knownUserWallets = userWallets ?? user?.wallets ?? [];
   const [fulfilmentInput, setFulfilmentInput] = useState("");
   const [submittingFulfilment, setSubmittingFulfilment] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -81,9 +85,31 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
 
   const currentStepIndex = getStepIndex();
 
-  const isPayer = currentAccount.address === agreement.terms.payer;
-  const isRecipient = currentAccount.address === agreement.terms.recipient;
-  const isApprover = currentAccount.address === agreement.terms.approver;
+  const activeWalletAddresses = new Set(
+    [
+      currentAccount.address,
+      ...knownUserWallets
+        .filter((w) => w.status === "active")
+        .map((w) => w.address),
+    ].filter(Boolean)
+  );
+  const describeParticipantWallet = (address: string | undefined): string | null => {
+    if (!address) return null;
+    const matched = knownUserWallets.find((w) => w.address === address);
+    if (matched) {
+      const providerLabel = formatStellarProviderName(matched.provider);
+      return matched.status === "unlinked"
+        ? `You · ${providerLabel} (Unlinked)`
+        : `You · ${providerLabel}`;
+    }
+    if (currentAccount.address && address === currentAccount.address) {
+      return "You · Primary wallet";
+    }
+    return null;
+  };
+  const isPayer = activeWalletAddresses.has(agreement.terms.payer);
+  const isRecipient = activeWalletAddresses.has(agreement.terms.recipient);
+  const isApprover = activeWalletAddresses.has(agreement.terms.approver);
 
   const isFundedStage =
     agreement.status === "FUNDED" ||
@@ -102,13 +128,12 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
     setFormError(null);
     setStatusMessage(pendingMsg);
     try {
-      const res = await fetch(
+      const res = await authenticatedFetch(
         `/api/agreements/${encodeURIComponent(agreement.id)}/${endpoint}`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...getAuthHeaders(),
           },
           body: JSON.stringify({
             ...body,
@@ -797,57 +822,66 @@ export const AgreementDetailRoom: React.FC<AgreementDetailRoomProps> = ({
           </h3>
 
           <div className="divide-y divide-[var(--tf-border)]">
-            <div className="py-2.5 first:pt-0 flex items-center justify-between gap-2">
-              <div>
-                <span className="font-medium text-slate-900 dark:text-white block">
-                  Person paying (client)
-                </span>
-                <span className="text-[11px] font-mono text-[var(--tf-muted)]">
-                  {formatAddress(agreement.terms?.payer || "")}
-                </span>
-              </div>
-              <span
-                className={`text-[11px] font-medium ${
-                  agreement.payerAccepted
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-amber-600 dark:text-amber-400"
-                }`}
-              >
-                {agreement.payerAccepted ? "Agreed" : "Pending"}
-              </span>
-            </div>
-
-            <div className="py-2.5 flex items-center justify-between gap-2">
-              <div>
-                <span className="font-medium text-slate-900 dark:text-white block">
-                  Person receiving payment
-                </span>
-                <span className="text-[11px] font-mono text-[var(--tf-muted)]">
-                  {formatAddress(agreement.terms?.recipient || "")}
-                </span>
-              </div>
-              <span
-                className={`text-[11px] font-medium ${
-                  agreement.recipientAccepted
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-amber-600 dark:text-amber-400"
-                }`}
-              >
-                {agreement.recipientAccepted ? "Agreed" : "Pending"}
-              </span>
-            </div>
-
-            <div className="py-2.5 last:pb-0 flex items-center justify-between gap-2">
-              <div>
-                <span className="font-medium text-slate-900 dark:text-white block">
-                  Person approving
-                </span>
-                <span className="text-[11px] font-mono text-[var(--tf-muted)]">
-                  {formatAddress(agreement.terms?.approver || "")}
-                </span>
-              </div>
-              <span className="text-[11px] text-[var(--tf-muted)]">Reviewer</span>
-            </div>
+            {[
+              {
+                role: "Person paying (client)",
+                address: agreement.terms?.payer || "",
+                statusLabel: agreement.payerAccepted ? "Agreed" : "Pending",
+                statusTone: agreement.payerAccepted
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-amber-600 dark:text-amber-400",
+                testId: "participant-payer",
+              },
+              {
+                role: "Person receiving payment",
+                address: agreement.terms?.recipient || "",
+                statusLabel: agreement.recipientAccepted ? "Agreed" : "Pending",
+                statusTone: agreement.recipientAccepted
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-amber-600 dark:text-amber-400",
+                testId: "participant-recipient",
+              },
+              {
+                role: "Person approving",
+                address: agreement.terms?.approver || "",
+                statusLabel: "Reviewer",
+                statusTone: "text-[var(--tf-muted)]",
+                testId: "participant-approver",
+              },
+            ].map((participant) => {
+              const ownerLabel = describeParticipantWallet(participant.address);
+              return (
+                <div
+                  key={participant.testId}
+                  data-testid={participant.testId}
+                  data-wallet-address={participant.address}
+                  className="py-2.5 first:pt-0 last:pb-0 flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-medium text-slate-900 dark:text-white">
+                        {participant.role}
+                      </span>
+                      {ownerLabel && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#4A2574]/10 dark:bg-[#F5D03A]/15 text-[#4A2574] dark:text-[#F5D03A]">
+                          {ownerLabel}
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className="text-[11px] font-mono text-[var(--tf-muted)] break-all block mt-0.5"
+                      title={participant.address}
+                    >
+                      {formatAddress(participant.address)}
+                      {participant.address ? ` (${participant.address})` : ""}
+                    </span>
+                  </div>
+                  <span className={`text-[11px] font-medium shrink-0 ${participant.statusTone}`}>
+                    {participant.statusLabel}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
